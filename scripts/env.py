@@ -842,9 +842,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     STUCK_WINDOW = 64
     STUCK_MIN_PROGRESS = 0.005
     # Episode step limit when /gurdy/nsteps is not set. Each step is
-    # MOVE_DURATION (0.3 s) of sim time, so 300 steps are 90 s. The scripted
-    # --wave-all gait needs about 290 steps to reach TARGET_FORWARD_DISTANCE.
-    DEFAULT_MAX_STEPS = 300
+    # MOVE_DURATION (0.3 s) of sim time, so 400 steps are 120 s. The scripted
+    # --wave-all gait needs about 290 steps to reach TARGET_FORWARD_DISTANCE,
+    # which leaves a learned gait some slack.
+    DEFAULT_MAX_STEPS = 400
 
     def __init__(self):
         """

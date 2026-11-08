@@ -308,7 +308,7 @@ def main():
     
     # Number of episodes and steps
     nepisodes = get_nepisodes(1000)
-    nsteps = rospy.get_param("/gurdy/nsteps", 300)
+    nsteps = rospy.get_param("/gurdy/nsteps", 400)
     
     # Create Q-learning agent
     qlearn_agent = QLearn(

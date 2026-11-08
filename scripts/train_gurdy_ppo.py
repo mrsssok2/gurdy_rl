@@ -229,7 +229,7 @@ def main():
     
     # Number of episodes and steps
     nepisodes = get_nepisodes(20)
-    nsteps = rospy.get_param("/gurdy/nsteps", 300)
+    nsteps = rospy.get_param("/gurdy/nsteps", 400)
     save_model_freq = rospy.get_param("/gurdy/save_model_freq", 100)
     
     # Set state and action sizes
