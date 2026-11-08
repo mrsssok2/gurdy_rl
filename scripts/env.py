@@ -35,23 +35,26 @@ def euler_from_quaternion(quaternion):
     euler = q.yaw_pitch_roll
     return (euler[2], euler[1], euler[0])  # roll, pitch, yaw
 
-# Neutral stance used on reset and for the "stand still" action: a wide, low,
-# bent-leg crouch. With all joints at 0 the legs point straight down and Gurdy
-# balances on its leg tips, which is tall and tips over easily.
+# Neutral stance used on reset and for the "stand still" action: a low
+# spider crouch with the knees up and out. With all joints at 0 the legs
+# point straight down and Gurdy balances on its leg tips, which is tall and
+# tips over easily.
 #
 # Joint directions, worked out from robot/gurdy.xacro (both axes are local y):
 #   - upper leg (limits -1.55..0): 0 points straight down; negative swings the
 #     leg outward and up, reaching about horizontal at -1.55.
 #   - lower leg (limits -2.9..0): the lower leg's angle from vertical is
 #     (upper - lower), with negative meaning outward. So lower = upper keeps it
-#     vertical, and a lower angle above upper tilts the foot outward.
-# Upper -1.0 puts the thigh 57 deg out from vertical. Lower -0.6 tilts the shin
-# about 23 deg outward, so the foot sits outside the knee. The feet then land
-# about 0.09 m below the hips (0.12 m with straight legs) and about 0.10 m from
-# the body centre. Upper legs keep 0.55 rad of travel for the gait offsets.
+#     vertical, and a lower angle below upper tilts the foot back inward.
+# Upper -1.35 puts the thigh 77 deg out from vertical (nearly horizontal).
+# Lower -1.95 folds the shin back so it tilts 34 deg inward, putting the
+# foot about 0.063 m below the hip and 0.025 m outside it (~0.05 m from the
+# body centre). These are the angles legs M3-M6 actually held in
+# scripts/test_pose.py runs. Note the upper legs have only 0.2 rad of
+# travel left toward -1.55, so the gait's -0.3 offsets are clipped there.
 # Try alternatives by hand with scripts/test_pose.py.
-NEUTRAL_UPPER_LEG = -1.0
-NEUTRAL_LOWER_LEG = -0.6
+NEUTRAL_UPPER_LEG = -1.35
+NEUTRAL_LOWER_LEG = -1.95
 # Order matches all_joint_names: upper legs M1-M6, then lower legs M1-M6
 NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
 UPPER_LEG_LIMITS = (-1.55, 0.0)
