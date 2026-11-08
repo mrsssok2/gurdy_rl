@@ -3,7 +3,8 @@
 Try a Gurdy stance by hand.
 
 Sends 12 joint angles to the position controllers, waits 2 s (sim time),
-then prints the base roll, pitch and height from /gurdy/odom.
+then prints commanded vs actual angle for every joint (from
+/gurdy/joint_states) and the base roll, pitch and height from /gurdy/odom.
 
 Angles are in radians, ordered upper legs M1-M6, then lower legs M1-M6
 (the same order as NEUTRAL_POSE in env.py). Limits: upper -1.55..0,
@@ -20,6 +21,7 @@ import sys
 
 import rospy
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
 from std_srvs.srv import Empty
 
@@ -47,12 +49,11 @@ def main():
 
     rospy.init_node("gurdy_test_pose", anonymous=True)
 
-    topics = (
-        ["/gurdy/head_upperlegM%d_joint_position_controller/command" % i
-         for i in range(1, 7)] +
-        ["/gurdy/upperlegM%d_lowerlegM%d_joint_position_controller/command" % (i, i)
-         for i in range(1, 7)]
+    joints = (
+        ["head_upperlegM%d_joint" % i for i in range(1, 7)] +
+        ["upperlegM%d_lowerlegM%d_joint" % (i, i) for i in range(1, 7)]
     )
+    topics = ["/gurdy/%s_position_controller/command" % j for j in joints]
     publishers = [rospy.Publisher(t, Float64, queue_size=1) for t in topics]
 
     angles = []
@@ -80,10 +81,21 @@ def main():
     rospy.loginfo("Sent angles, waiting %.0f s...", SETTLE_TIME)
     rospy.sleep(SETTLE_TIME)
 
+    states = rospy.wait_for_message("/gurdy/joint_states", JointState, timeout=5.0)
     odom = rospy.wait_for_message("/gurdy/odom", Odometry, timeout=5.0)
+    actual = dict(zip(states.name, states.position))
+
+    print("%-30s %8s %8s %8s" % ("joint", "cmd", "actual", "error"))
+    for i, (joint, cmd) in enumerate(zip(joints, angles)):
+        if joint not in actual:
+            print("%-30s %8.3f %8s %8s  NOT IN joint_states" % (joint, cmd, "-", "-"))
+            continue
+        pos = actual[joint]
+        lo, hi = UPPER_LIMITS if i < 6 else LOWER_LIMITS
+        note = "  OUTSIDE [%.2f, %.2f]" % (lo, hi) if not lo - 0.01 <= pos <= hi + 0.01 else ""
+        print("%-30s %8.3f %8.3f %+8.3f%s" % (joint, cmd, pos, pos - cmd, note))
+
     roll, pitch = roll_pitch(odom.pose.pose.orientation)
-    print("upper: %s" % " ".join("%.3f" % a for a in angles[:6]))
-    print("lower: %s" % " ".join("%.3f" % a for a in angles[6:]))
     print("roll=%.1f deg  pitch=%.1f deg  z=%.4f m" % (
         math.degrees(roll), math.degrees(pitch), odom.pose.pose.position.z))
 
