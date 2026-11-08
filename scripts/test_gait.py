@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Run a fixed gait through the walk env and report how far it gets.
+Run a fixed per-leg gait through the walk env and report how far it gets.
 
-Prints the foot poses and their IK joint angles, resets the env (every group
-GROUND_OUT), then loops a stroke for N cycles. After each cycle it prints
+Prints the foot poses and their IK joint angles, resets the env (every leg
+GROUND_OUT), then loops a gait cycle for N cycles. After each cycle it prints
 the forward distance from the start, the progress made that cycle, base roll
 and pitch, and any fall.
 
@@ -18,26 +18,30 @@ action is sent until the end of its hold:
          joint still is from its foot pose when the next action starts.
          An end error near max means the pose was never reached.
 
-A stroke moves one group through
+Every env action moves one leg, so five legs are always on the ground. A
+stroke moves one leg through
     LIFT, <return reach>, LOWER, <push reach>
-so the feet travel back in the air and the push happens while they are
+so the foot travels back in the air and the push happens while it is
 planted. A planted foot moving OUT pushes the body away from it along its
-spoke; one moving IN pulls the body toward it.
+spoke; one moving IN pulls the body toward it. Spokes: 1 = 210 deg,
+2 = 330, 3 = 90, 4 = 150, 5 = 30, 6 = 270 (forward = +x = 0 deg).
 
-Default (+x): BACK stroke, pushing OUT; FRONT and SIDE stay grounded
-    BACK LIFT, BACK REACH_IN, BACK LOWER, BACK REACH_OUT
---alternate (+x): the BACK stroke above, then a FRONT stroke pulling IN
-    FRONT LIFT, FRONT REACH_OUT, FRONT LOWER, FRONT REACH_IN
---mirror swaps FRONT and BACK, so the gait should move about as far toward
--x: FRONT pushing OUT, and with --alternate also BACK pulling IN.
+--wave (+x): the back legs push OUT, leg 1 then leg 4
+    leg 1 pushes the body along 30 deg (+x, +y), leg 4 along -30 deg
+    (+x, -y), so the body zig-zags forward
+--wave-all (+x): the --wave strokes, then the front legs pull IN, leg 5
+    (pulls toward 30 deg) then leg 2 (toward -30 deg)
+--mirror mirrors the legs across the y axis (1 <-> 2, 4 <-> 5), so the gait
+should move about as far toward -x: legs 2 and 5 push OUT, and with
+--wave-all legs 4 and 1 then pull IN.
 
 The env's own episode-end checks (stuck, goal, step limit) are reported but
 ignored; the run stops only on a fall or after N cycles.
 
 Usage (with Gazebo and the controllers running):
-    rosrun my_gurdy_description test_gait.py 20
-    rosrun my_gurdy_description test_gait.py 20 --mirror
-    rosrun my_gurdy_description test_gait.py 20 --alternate --hold 0.3
+    rosrun my_gurdy_description test_gait.py 20 --wave
+    rosrun my_gurdy_description test_gait.py 20 --wave --mirror
+    rosrun my_gurdy_description test_gait.py 20 --wave-all --hold 0.3
     rosrun my_gurdy_description test_gait.py --poses   # print the IK angles only
 """
 import argparse
@@ -50,40 +54,46 @@ from sensor_msgs.msg import JointState
 
 import env as gurdy_env
 
+# Pushing back legs and pulling front legs, in stroke order, for +x
+WAVE_PUSH_LEGS = (1, 4)
+WAVE_PULL_LEGS = (5, 2)
+# Mirror image of each leg across the y axis (spoke angle a -> 180 - a)
+MIRROR_LEG = {1: 2, 2: 1, 3: 3, 4: 5, 5: 4, 6: 6}
 
-def stroke(group, push):
+
+def stroke(leg, push):
     """
-    (leg, move) list for one stroke of each leg of group in turn, whose
-    planted foot moves `push` (REACH_OUT or REACH_IN): lift, reach the other
-    way, lower, push.
+    (leg, move) list for one stroke of leg, whose planted foot moves `push`
+    (REACH_OUT or REACH_IN): lift, reach the other way, lower, push.
     """
     back = gurdy_env.REACH_IN if push == gurdy_env.REACH_OUT else gurdy_env.REACH_OUT
+    return [(leg, gurdy_env.LIFT), (leg, back),
+            (leg, gurdy_env.LOWER), (leg, push)]
+
+
+def gait(wave_all, mirror):
+    """(leg, move) list for one cycle, and the expected direction."""
+    strokes = [(leg, gurdy_env.REACH_OUT) for leg in WAVE_PUSH_LEGS]
+    if wave_all:
+        strokes += [(leg, gurdy_env.REACH_IN) for leg in WAVE_PULL_LEGS]
     moves = []
-    for leg in gurdy_env.GROUP_LEGS[group]:
-        moves += [(leg, gurdy_env.LIFT), (leg, back),
-                  (leg, gurdy_env.LOWER), (leg, push)]
-    return moves
-
-
-def gait(mirror, alternate):
-    """(group, move) list for one cycle, and the expected direction."""
-    pusher, puller = ("FRONT", "BACK") if mirror else ("BACK", "FRONT")
-    moves = stroke(pusher, gurdy_env.REACH_OUT)
-    if alternate:
-        moves += stroke(puller, gurdy_env.REACH_IN)
+    for leg, push in strokes:
+        moves += stroke(MIRROR_LEG[leg] if mirror else leg, push)
     return moves, ("-x" if mirror else "+x")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run a fixed leg-group gait through MyGurdyWalkEnv.")
+        description="Run a fixed per-leg gait through MyGurdyWalkEnv.")
     parser.add_argument("cycles", type=int, nargs="?", default=0,
                         help="number of gait cycles to run")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--wave", action="store_true",
+                      help="back legs 1 then 4 push OUT, zig-zagging toward +x")
+    mode.add_argument("--wave-all", action="store_true",
+                      help="as --wave, then front legs 5 then 2 pull IN")
     parser.add_argument("--mirror", action="store_true",
-                        help="swap FRONT and BACK, to walk toward -x")
-    parser.add_argument("--alternate", action="store_true",
-                        help="follow each pushing stroke with a pulling stroke "
-                             "of the opposite group")
+                        help="mirror the legs across the y axis, to walk toward -x")
     parser.add_argument("--hold", type=float, default=0.0,
                         help="extra sim seconds to wait after each action, on "
                              "top of the env's own %.1f s smooth move (default 0)"
@@ -97,8 +107,10 @@ def main():
         return
     if args.cycles < 1:
         parser.error("give the number of cycles to run (or --poses)")
+    if not (args.wave or args.wave_all):
+        parser.error("choose a gait: --wave or --wave-all")
 
-    moves, expected = gait(args.mirror, args.alternate)
+    moves, expected = gait(args.wave_all, args.mirror)
     cycle_actions = [gurdy_env.action_index(leg, move) for leg, move in moves]
     print("Gait cycle (expect %s): %s" % (
         expected, ", ".join("leg %d %s" % lm for lm in moves)))
