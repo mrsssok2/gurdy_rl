@@ -32,7 +32,7 @@
          The legs' ixx/iyy are only ~10% above the exact values, so the
          dynamics the hip and knee servos see (inertia about the joint y axis,
          dominated by the m d^2 offset terms: ~4.3e-4 kg m^2 at a straight
-         hip, ~7.2e-5 kg m^2 at the knee) are essentially unchanged; izz is
+         hip, ~7.4e-5 kg m^2 at the knee) are essentially unchanged; izz is
          spin about each leg's own long axis, which no joint drives. Do not
          "correct" these back to the formula values. -->
 
@@ -67,21 +67,27 @@
     <!-- rad/s. 0.005 rad/s would need ~5 min for a 1.5 rad stroke. -->
     <xacro:property name="joint_velocity" value="5.0"/>
     <!-- Passive joint dynamics: viscous damping in N*m*s/rad and Coulomb
-         friction in N*m, to bleed off oscillation. -->
-    <xacro:property name="joint_damping" value="0.05"/>
-    <!-- Knee damping. The knee controllers' D gain was 0.3, and with a
-         0.68 rad error the knee chattered at ~34 rad/s mean |velocity| with
-         almost no position spread: D (-10 N*m) outweighed P (+6.8) and
-         pushed the knee away from its target. A velocity gain applied once
-         per physics step is only stable while gain * dt / I < 2. At the
-         default 1 ms step, with I ~7.2e-5 kg m^2 about the knee, that means
-         gain < ~0.14, so 0.3 was well past it. The hips (I ~4.3e-4) are
-         fine at 0.3. The knee D gain is now 0.05 (config/gurdy_control.yaml)
-         and this physical damping takes over most of its job. 0.2 would
-         itself break that limit if Gazebo applied it explicitly, so the knee
-         joints set implicitSpringDamper: ODE then folds the damping into
-         the constraint solve, which is stable at any value. -->
-    <xacro:property name="knee_damping" value="0.2"/>
+         friction in N*m, to bleed off oscillation.
+
+         Damping is 0.2 on every joint, hips and knees, and is applied
+         implicitly (implicitSpringDamper on each joint below). A velocity
+         gain applied once per physics step is only stable while
+         gain * dt / I < 2. At the default 1 ms step, with the legs folded as
+         in the GROUND_OUT stance (hip -1.19, knee -1.56):
+           knee  I ~7.4e-5 kg m^2 (lower leg + foot; posture-independent)
+           hip   I ~2.6e-4 kg m^2 with the knee held rigid, ~1.8e-4 with
+                 the knee free (it drops to ~1.5e-4 in LIFT_IN). The ~4.3e-4
+                 figure is for a straight leg, which the gait never uses.
+         Both controllers' D gain is 0.05 (config/gurdy_control.yaml):
+         knee 0.05*0.001/7.4e-5 = 0.68, hip 0.05*0.001/1.8e-4 = 0.28, so 3x
+         and 7x inside the limit. The old D of 0.3 broke it at the knee
+         (~4.1) and, together with 0.05 of explicit damping, sat at
+         1.4-1.9 for the hip at GROUND_OUT and over 2 in the lifted poses,
+         which is where the hips chattered at 21-39 rad/s. 0.2 of physical
+         damping would itself be 2.7 (knee) and 1.1-1.3 (hip) if Gazebo
+         applied it explicitly; implicitly, ODE folds it into the constraint
+         solve, which is stable at any value. -->
+    <xacro:property name="joint_damping" value="0.2"/>
     <xacro:property name="joint_friction" value="0.01"/>
 
     <gazebo>
@@ -286,10 +292,10 @@
                  the thigh). With +1.57 allowed, legs could buckle backwards on
                  landing after a reset and stay stuck in that mirrored pose. -->
             <limit lower="-2.9" upper="0.0" effort="${joint_effort}" velocity="${joint_velocity}"/>
-            <dynamics damping="${knee_damping}" friction="${joint_friction}"/>
+            <dynamics damping="${joint_damping}" friction="${joint_friction}"/>
             <axis xyz="0 1 0"/>
         </joint>
-        <!-- Implicit damping, so knee_damping stays stable; see its note. -->
+        <!-- Implicit damping, so joint_damping stays stable; see its note. -->
         <gazebo reference="upperlegM${number}_lowerlegM${number}_joint">
             <implicitSpringDamper>true</implicitSpringDamper>
         </gazebo>
@@ -368,6 +374,10 @@
             <dynamics damping="${joint_damping}" friction="${joint_friction}"/>
             <axis xyz="0 1 0"/>
         </joint>
+        <!-- Implicit damping, so joint_damping stays stable; see its note. -->
+        <gazebo reference="head_upperlegM${number}_joint">
+            <implicitSpringDamper>true</implicitSpringDamper>
+        </gazebo>
         
         <xacro:lowerleg_link number="${number}"/>
         <xacro:lower_transmission number="${number}"/>
