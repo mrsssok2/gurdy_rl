@@ -42,7 +42,6 @@ class DQN:
         
         # For tracking performance improvements
         self.best_reward = -float('inf')
-        self.unstable_states = {}  # track states with instability
 
     def _build_model(self):
         """Build the neural network model for DQN"""
@@ -61,17 +60,6 @@ class DQN:
     def memorize(self, state, action, reward, next_state, done):
         """Store experience in replay memory"""
         self.memory.append((state, action, reward, next_state, done))
-        
-        # Track unstable states specially
-        if "UNSTABLE" in state or "FALLEN" in state:
-            state_key = state
-            if state_key not in self.unstable_states:
-                self.unstable_states[state_key] = []
-            self.unstable_states[state_key].append((action, reward))
-            
-            # Keep only the most recent entries
-            if len(self.unstable_states[state_key]) > 20:
-                self.unstable_states[state_key].pop(0)
 
     def act(self, state, use_raw_state=False):
         """
