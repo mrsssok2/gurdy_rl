@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Voice control demo: start Gazebo first (one_touch_spawn_control.launch).
+         rl_model_path: Keras DQN model for "RL mode", absolute or relative to
+         the package; empty means RL mode falls back to the scripted gait. -->
+    <arg name="rl_model_path" default="" />
+    <arg name="reset_on_start" default="true" />
+
+    <!-- Position controllers -->
+    <include file="$(find my_gurdy_description)/launch/start_controllers.launch" />
+
+    <node pkg="my_gurdy_description" type="voice_command_node.py" name="gurdy_voice_command"
+          output="screen">
+        <param name="rl_model_path" value="$(arg rl_model_path)" />
+        <param name="reset_on_start" value="$(arg reset_on_start)" />
+    </node>
+</launch>
