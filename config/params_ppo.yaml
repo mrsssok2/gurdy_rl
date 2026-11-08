@@ -53,7 +53,7 @@ gurdy:
   # Training output parameters
   save_model_freq: 100    # Save model every N episodes
   log_freq: 1             # Log information every N episodes
-  outdir: "/home/user/catkin_ws/src/my_gurdy_description/output/ppo"  # Output directory for saved models
+  outdir: "output/ppo"  # Output directory for saved models, relative to the package (or an absolute path)
   load_actor_path: ""     # Path to load a pre-trained actor model (empty to train from scratch)
   load_critic_path: ""    # Path to load a pre-trained critic model (empty to train from scratch)
     

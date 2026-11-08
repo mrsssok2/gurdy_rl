@@ -60,7 +60,7 @@ gurdy:
   # Training output parameters
   save_model_freq: 100   # Save model every N episodes
   log_freq: 1           # Log information every N episodes
-  outdir: "/home/user/catkin_ws/src/my_gurdy_description/output/sarsa"  # Output directory for saved models
+  outdir: "output/sarsa"  # Output directory for saved models, relative to the package (or an absolute path)
   load_model_path: ""   # Path to load a pre-trained model (empty to train from scratch)
     
   # Robot physical parameters

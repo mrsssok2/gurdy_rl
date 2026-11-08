@@ -12,6 +12,7 @@ matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plotting
 
 # Make sure environment is registered
 import env
+from output_paths import get_outdir
 
 # Set up the live plot
 plt.ion()  # Turn on interactive mode
@@ -215,9 +216,8 @@ def main():
     rospy.init_node('gurdy_sac', anonymous=True, log_level=rospy.INFO)
     
     # Create output directory
-    outdir = rospy.get_param("/gurdy/outdir", "/home/user/catkin_ws/src/my_gurdy_description/output/sac")
-    if not os.path.exists(outdir):
-        os.makedirs(outdir)
+    # Output directory inside the package (found at runtime); /gurdy/outdir overrides it
+    outdir = get_outdir("output/sac")
     
     # Create environment
     env = gym.make('MyGurdyWalkEnv-v0')
