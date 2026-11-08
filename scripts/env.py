@@ -839,11 +839,24 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     # get_forward_position() / get_forward_velocity(), so flipping this one
     # constant flips them all.
     FORWARD_SIGN = +1
+    # Reward scale. Forward progress dominates: walking the 0.5 m target with
+    # the scripted --wave-all gait (~294 steps) earns about +64, standing
+    # still for the whole 400 steps about +7, and falling early about -9.4.
+    # Before, standing still for 400 steps (+79) beat walking (+70), and the
+    # -100 fall penalty swamped everything else.
     # Reward per metre of forward progress; negative when moving backwards
-    PROGRESS_WEIGHT = 20.0
-    # Maximum per-step reward for staying upright (was 5.0, which made
-    # standing still worth far more than walking)
-    UPRIGHT_BONUS = 0.2
+    PROGRESS_WEIGHT = 100.0
+    # Maximum per-step reward for staying upright
+    UPRIGHT_BONUS = 0.02
+    # Penalty per radian of hip offset from STAND_POSE, summed over the six
+    # hips, per step
+    ENERGY_WEIGHT = 0.01
+    # Reward on the step the robot falls (ends the episode)
+    FALL_PENALTY = -10.0
+    # Reward added when an episode ends short of the target without a fall
+    SHORT_EPISODE_PENALTY = -1.0
+    # Reward added when the robot reaches TARGET_FORWARD_DISTANCE
+    COMPLETION_BONUS = 10.0
     # Episode ends once the robot has walked this far forward, in metres
     TARGET_FORWARD_DISTANCE = 0.5
     # The robot is "stuck" if it gains less than STUCK_MIN_PROGRESS metres of
@@ -1055,9 +1068,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Extract values from observations
         head_height = observations[OBS_HEAD_HEIGHT]
 
-        # Big penalty if the robot has fallen
+        # Penalty if the robot has fallen, sized against the walking reward
         if fallen:
-            return -100.0
+            return self.FALL_PENALTY
 
         # Forward progress this step (signed: moving backwards is
         # penalised). Uses ground-truth odometry directly.
@@ -1075,22 +1088,22 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         stability_reward = self.UPRIGHT_BONUS * min(1.0, height_ratio)  # Cap at 1.0
 
         # Penalty for holding the legs away from the stand pose (energy
-        # efficiency): 0.05 per radian of hip offset from STAND_POSE, summed
-        # over the six hips
+        # efficiency): ENERGY_WEIGHT per radian of hip offset from
+        # STAND_POSE, summed over the six hips
         stand_hip = POSE_ANGLES[STAND_STATE][0]
         hip_offset = sum(abs(POSE_ANGLES[pose][0] - stand_hip)
                          for pose in leg_states_from_obs(observations))
-        energy_penalty = -0.05 * hip_offset
+        energy_penalty = -self.ENERGY_WEIGHT * hip_offset
 
         # Penalty for an episode that ends short of the goal
         terminal_penalty = 0
         if done and forward_distance < self.TARGET_FORWARD_DISTANCE:
-            terminal_penalty = -1.0
+            terminal_penalty = self.SHORT_EPISODE_PENALTY
 
         # Bonus for reaching the target by walking forward
         completion_bonus = 0
         if done and forward_distance >= self.TARGET_FORWARD_DISTANCE:
-            completion_bonus = 10.0
+            completion_bonus = self.COMPLETION_BONUS
 
         # Penalty for a LIFT while another leg was already lifted (a no-op)
         invalid_lift_penalty = self.INVALID_LIFT_PENALTY if self.invalid_lift else 0.0
