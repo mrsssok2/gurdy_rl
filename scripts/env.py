@@ -39,14 +39,21 @@ class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
     
     metadata = {'render.modes': ['human']}
-    
+
+    # Fallen if roll or pitch of the base exceeds this many degrees
+    MAX_TILT_DEG = 60.0
+    # Fallen if the base drops below this fraction of its post-reset height
+    FALL_HEIGHT_RATIO = 0.5
+
     def __init__(self):
         """
         Initialize the Gurdy single leg environment
         """
         super(MyGurdySingleLegEnv, self).__init__()
-        
+
         # Initialize variables
+        self.initial_height = 0.0  # Settled base height after reset (odom z)
+        self.fall_reason = None
         self._joint_states = JointState()
         self._odom = Odometry()
         self._model_states = None
@@ -210,20 +217,34 @@ class MyGurdySingleLegEnv(gym.Env):
         
     def check_robot_fallen(self):
         """
-        Check if the robot has fallen (head is too close to the ground)
-        
+        Check if the robot has fallen: head bumper contact, base tilted past
+        MAX_TILT_DEG in roll or pitch, or base below FALL_HEIGHT_RATIO of the
+        post-reset height. The reason is stored in self.fall_reason and logged.
+
         Returns:
             bool: True if fallen, False otherwise
         """
-        # Check using bumper contact if available
+        self.fall_reason = None
+
+        roll, pitch = self.get_roll_pitch()
+        max_tilt = math.radians(self.MAX_TILT_DEG)
+        z = self._odom.pose.pose.position.z
+
         if self._has_fallen:
+            self.fall_reason = "head bumper contact"
+        elif abs(roll) > max_tilt:
+            self.fall_reason = "roll %.1f deg exceeds %.0f deg" % (
+                math.degrees(roll), self.MAX_TILT_DEG)
+        elif abs(pitch) > max_tilt:
+            self.fall_reason = "pitch %.1f deg exceeds %.0f deg" % (
+                math.degrees(pitch), self.MAX_TILT_DEG)
+        elif self.initial_height > 0 and z < self.FALL_HEIGHT_RATIO * self.initial_height:
+            self.fall_reason = "height %.4f m below %.0f%% of post-reset %.4f m" % (
+                z, 100 * self.FALL_HEIGHT_RATIO, self.initial_height)
+
+        if self.fall_reason:
+            rospy.logwarn("Robot has fallen: %s", self.fall_reason)
             return True
-        
-        # Check using height (if bumper didn't detect a fall)
-        # If head height is less than a threshold (e.g., 0.1m), consider the robot has fallen
-        if self.head_height < 0.1:
-            return True
-            
         return False
     
     def _check_all_systems_ready(self):
@@ -342,7 +363,8 @@ class MyGurdySingleLegEnv(gym.Env):
         info = {
             'steps': self.cumulated_steps,
             'cumulated_reward': self.cumulated_reward,
-            'fallen': fallen
+            'fallen': fallen,
+            'fall_reason': self.fall_reason
         }
         
         return observation, reward, done, info
@@ -653,7 +675,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         """
         # If robot has fallen, episode is done
         if fallen:
-            rospy.logwarn("Episode done: Robot has fallen")
+            rospy.logwarn("Episode done: Robot has fallen (%s)", self.fall_reason)
             return True
         
         # Forward (+x) progress from ground-truth odometry, matching the reward
