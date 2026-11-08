@@ -46,15 +46,17 @@ def euler_from_quaternion(quaternion):
 #   - lower leg (limits -2.9..0): the lower leg's angle from vertical is
 #     (upper - lower), with negative meaning outward. So lower = upper keeps it
 #     vertical, and a lower angle below upper tilts the foot back inward.
-# Upper -1.35 puts the thigh 77 deg out from vertical (nearly horizontal).
-# Lower -1.95 folds the shin back so it tilts 34 deg inward, putting the
-# foot about 0.063 m below the hip and 0.025 m outside it (~0.05 m from the
-# body centre). These are the angles legs M3-M6 actually held in
-# scripts/test_pose.py runs. Note the upper legs have only 0.2 rad of
-# travel left toward -1.55, so the gait's -0.3 offsets are clipped there.
+# These are the angles the robot actually holds in scripts/test_pose.py.
+# Commanded at -1.35/-1.95, the hips settled on their -1.55 lower limit and
+# the knees at ~-2.27, identically on all six legs. The hips are set just
+# off the limit at -1.50 and the knees at -2.25: the thigh is 86 deg out from
+# vertical (nearly horizontal) and the shin tilts 43 deg back inward, putting
+# the foot about 0.048 m below the hip and 0.019 m outside it (~0.044 m from
+# the body centre). The hips are at the bottom of their range, so gait
+# offsets must be positive (thigh swung back down toward vertical).
 # Try alternatives by hand with scripts/test_pose.py.
-NEUTRAL_UPPER_LEG = -1.35
-NEUTRAL_LOWER_LEG = -1.95
+NEUTRAL_UPPER_LEG = -1.50
+NEUTRAL_LOWER_LEG = -2.25
 # Order matches all_joint_names: upper legs M1-M6, then lower legs M1-M6
 NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
 UPPER_LEG_LIMITS = (-1.55, 0.0)
