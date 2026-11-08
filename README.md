@@ -254,8 +254,164 @@ python -m unittest discover -s voice_client/tests
 python -m unittest discover -s scripts/tests
 ```
 
+The vision tests (`scripts/tests/test_vision.py`) need OpenCV and are skipped
+without it; run them in the container, where `python3` has cv2.
 
+## Computer vision demo
 
+Gurdy's head camera looks forward along its walking direction (+x), tilted
+12° down. `vision_node.py` finds red, green and blue objects in its image,
+and two voice commands use them: "kya dikh raha hai" describes what Gurdy
+sees, and "laal gend ke paas jao" walks up to an object.
 
+```
+/gurdy/camera/image_raw -> vision_node.py -> /gurdy/detections (JSON)
+                                          -> /gurdy/camera/annotated (image)
+/gurdy/detections -> voice_command_node.py: describe, go_to_object
+```
 
+| Say | Does |
+|-----|------|
+| "kya dikh raha hai" / "क्या दिख रहा है" / "what do you see" | Lists the objects in view with their side, e.g. "Mujhe saamne laal gend aur baayen taraf neela dabba dikh raha hai" |
+| "laal gend ke paas jao" / "लाल गेंद के पास जाओ" | Walks up to the red ball: "Main laal gend ke paas pahunch gaya" |
+| "neele dabbe tak jao" / "hara dabba" / "go to the green box" | The same for a box. Colours: laal / neela / hara (red, blue, green). Objects: gend / ball, dabba / box, or none for any shape |
+| "ruko" | Stops the approach, as for a walk |
 
+If the object isn't in view, the reply is "Mujhe laal gend nahi dikh rahi".
+A colour alone ("laal") is not understood. The command needs an object
+word, a go word (jao, chalo, paas, tak), or both.
+
+### Running it
+
+Terminal 1 (container): Gazebo with the demo world. The red ball (6 cm) is
+0.35 m straight ahead, the blue box (8 cm) 0.45 m ahead and 22 cm left, and
+the green box 0.5 m ahead and 25 cm right. All three are static.
+
+```bash
+cd catkin_ws
+source devel/setup.bash
+roslaunch my_gurdy_description one_touch_spawn_control.launch world:=demo
+# gui:=false runs Gazebo without its window
+```
+
+Terminal 2 (container): controllers, the voice command node and the vision
+node, which `voice_demo.launch` now starts by default (`vision:=false`
+leaves it out).
+
+```bash
+cd catkin_ws
+source devel/setup.bash
+roslaunch my_gurdy_description voice_demo.launch
+```
+
+Terminal 3 (container, optional): the dashboard, now with the live
+annotated camera view in the middle (`_camera:=false` hides it).
+
+```bash
+cd catkin_ws
+source devel/setup.bash
+rosrun my_gurdy_description dashboard.py
+```
+
+Terminal 4 (Windows PowerShell, repo root, venv): the voice client, as
+above. Use `--type --no-tts` to type the commands instead.
+
+```powershell
+venv\Scripts\Activate.ps1
+$env:GNANI_API_KEY = "<your key>"
+python voice_client/main.py
+```
+
+By hand, inside the container:
+
+```bash
+rostopic echo /gurdy/detections            # what the camera sees, ~8-10 Hz
+rosrun rqt_image_view rqt_image_view /gurdy/camera/annotated
+rostopic echo /gurdy/voice_feedback &
+rostopic pub -1 /gurdy/voice_command std_msgs/String "data: '{\"action\": \"describe\"}'"
+rostopic pub -1 /gurdy/voice_command std_msgs/String \
+  "data: '{\"action\": \"go_to_object\", \"color\": \"red\", \"shape\": \"ball\"}'"
+```
+
+### How it works
+
+`scripts/vision.py` (no ROS) thresholds the image in HSV for each colour,
+removes specks with a morphological opening, and keeps each blob over
+`MIN_AREA_FRACTION` of the image. The opening also removes the thin red line
+Gazebo draws along the world x axis. Each detection has a pixel centroid
+and box, and a **bearing** from the image centre (positive is left, from
+the 80° field of view). It also has an **area fraction**, and a side
+(left / center / right, centre is within ±10°). The **shape** guess is
+"ball" if the blob fills most of its enclosing circle. A blob cut off by
+the image border is a ball if its free edge fits a circle. The **distance**
+is rough. The blob's lowest pixel is where it meets the ground, so the
+camera height (0.128 m) and tilt give the distance. If the bottom of the
+image cuts the blob off, the distance comes from its width and known size
+instead. On a real frame of the demo world, the bearings were within 1-2°
+and the distances within 4 cm of the world file.
+
+`scripts/visual_approach.py` (no ROS) runs `go_to_object`. Gurdy can't
+turn, so it lines up by stepping sideways:
+
+1. Wait for a camera frame taken after the last move. Take the largest
+   detection of the colour, and of the shape if one was asked for.
+2. If it isn't there, count a miss. After `lost_checks` misses in a row,
+   stop: "not_found" if it was never seen, else "lost".
+3. Stop as "reached" if the target covers `close_area` of the image, or if
+   the bottom of the image cuts it off. The bottom row sees the ground
+   ~0.13 m ahead, so a cut-off object is closer than that.
+4. If it is more than `bearing_tol_deg` off centre, side-step toward it for
+   1-3 cycles (~2.6 cm each), sized by its estimated sideways offset.
+   Otherwise walk forward 1 cycle (~2.7 cm), or 2 while it is still small.
+
+Every move is whole cycles of the existing scripted gaits, so all legs are
+down between moves. A fall, a stop, and 3 moves in a row without progress
+("stuck") end the approach as they end a walk. So do 40 moves or 800 steps
+("gave_up").
+
+Measured in Gazebo through the voice client:
+
+| Command | Result |
+|---------|--------|
+| laal gend ke paas jao | reached, 6 moves, 104 steps, 1 side-step; stopped ~0.16 m from the ball |
+| neele dabbe ke paas jao (29° left) | reached, 5 moves, 256 steps (4 side-step moves, then forward) |
+| hare dabbe ke paas jao (29° right) | reached, 13 moves, 384 steps |
+| hari gend ke paas jao | not_found, no steps ("Mujhe hari gend nahi dikh rahi") |
+| ruko during an approach | stopped |
+
+### What to tune
+
+- **HSV ranges** (`vision.HSV_RANGES`, or the node's `~hsv_ranges`
+  param). OpenCV hue runs 0-179, and red wraps around 0, so it has two
+  ranges. Saturation ≥ 100 keeps out the grey ground and sky. Value ≥ 40
+  keeps the shaded side of an object. To check a colour, save a frame and
+  look at its HSV values (`cv2.cvtColor(img, cv2.COLOR_BGR2HSV)`). For
+  real-world lighting, raise the saturation and value minimums first.
+  Example override:
+  `rosrun my_gurdy_description vision_node.py _hsv_ranges:='{"red": [[[0, 120, 60], [10, 255, 255]], [[170, 120, 60], [179, 255, 255]]]}'`
+- **Close threshold** (`close_area_ball`, default 0.04, and
+  `close_area_box`, default 0.09, args of `voice_demo.launch`). A larger
+  value stops closer. Keep it below the area the object reaches before the
+  bottom of the image cuts it off, from ~0.15 m. In Gazebo the ball's area
+  peaked at ~0.056, so with 0.06 Gurdy never stopped and walked into the
+  ball. 0.04 stops a 6 cm ball ~0.18 m from the camera. The box is bigger,
+  so it needs a larger fraction for the same distance. The cut-off rule in
+  step 3 is the backstop.
+- **Bearing tolerance** (`bearing_tol_deg`, default 8). Smaller lines up
+  more precisely but side-steps more. A fixed sideways offset looks bigger
+  as Gurdy gets closer: 3 cm is 6° at 0.3 m but 11° at 0.15 m.
+- **lost_checks** (default 3): frames in a row without the target before
+  giving up.
+- **min_area_fraction** (`~min_area_fraction`, default 0.0005): raise it
+  if noise or far-off clutter is detected.
+- **Camera tilt and height.** `robot/gurdy.xacro` (`camera_tilt_rad`, the
+  `head_camera_joint` origin) and `vision_node.py` (`~camera_tilt_deg`,
+  `~camera_height_m`) must agree, or the distances are off.
+
+Example: `roslaunch my_gurdy_description voice_demo.launch close_area_ball:=0.05 bearing_tol_deg:=6`
+
+Limits: Gurdy cannot turn, so objects more than ~40° to the side are out of
+view. The side-step gait also turns the body slowly, by about 3° per cycle
+and clockwise in both directions: about −30° after 10 cycles. The approach
+doesn't mind, because bearings are measured in the camera frame, but after
+a long sideways approach Gurdy no longer faces +x.
