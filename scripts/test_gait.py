@@ -10,9 +10,10 @@ and pitch, and any fall.
 After each action it also prints the joint tracking error, |actual - target|
 over all 12 joints, sampled from /gurdy/joint_states from the moment the
 action is sent until the end of its hold:
-    max  the largest error seen during the action. It includes the jump
-         to the new target right at the start, so it is roughly the size
-         of the move.
+    max  the largest error seen during the action, against the action's
+         final targets. The env eases the targets there over
+         env.MOVE_DURATION, so at the start this is roughly the size of the
+         move.
     end  the largest error at the last sample, i.e. how far the worst
          joint still is from its foot pose when the next action starts.
          An end error near max means the pose was never reached.
@@ -86,7 +87,8 @@ def main():
                              "of the opposite group")
     parser.add_argument("--hold", type=float, default=0.0,
                         help="extra sim seconds to wait after each action, on "
-                             "top of the env's own 0.1 s wall-clock wait (default 0)")
+                             "top of the env's own %.1f s smooth move (default 0)"
+                             % gurdy_env.MOVE_DURATION)
     parser.add_argument("--poses", action="store_true",
                         help="print the foot poses and IK angles, then exit")
     args = parser.parse_args(rospy.myargv(argv=sys.argv)[1:])

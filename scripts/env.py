@@ -158,6 +158,15 @@ def apply_move(pose, move):
 ACTIONS = [(group, move) for group in GROUP_NAMES for move in GROUP_MOVES]
 ACTIONS.append((None, STAND))
 
+# Each action moves the joints smoothly from their current targets to the new
+# ones over MOVE_DURATION s of sim time, publishing intermediate targets at
+# MOVE_RATE_HZ with a smoothstep profile (zero speed at both ends). Jumping
+# straight to the new targets jolted the body (peak tracking errors of
+# 0.3-0.4 rad). The step returns once the move is done, so MOVE_DURATION is
+# also the time per env step.
+MOVE_DURATION = 0.3    # s
+MOVE_RATE_HZ = 50
+
 def format_foot_poses():
     """The foot poses and their IK joint angles, one line per pose."""
     r0, h0 = leg_kinematics.NEUTRAL_FOOT
@@ -297,6 +306,9 @@ class MyGurdySingleLegEnv(gym.Env):
             for i in range(1, 7)
         ]
         self.all_publishers = self.publishers_array + self.lower_leg_publishers
+        # Last targets sent to the 12 joints (see move_all_joints); the start
+        # of each smooth move. Every reset commands STAND_POSE.
+        self.joint_targets = list(STAND_POSE)
 
         # Create subscribers
         rospy.Subscriber("/gurdy/joint_states", JointState, self._joints_callback)
@@ -673,6 +685,29 @@ class MyGurdySingleLegEnv(gym.Env):
         """
         for publisher_object, position in zip(self.all_publishers, joint_positions):
             publisher_object.publish(Float64(data=position))
+        self.joint_targets = list(joint_positions)
+
+    def move_all_joints_smoothly(self, joint_positions, duration=MOVE_DURATION):
+        """
+        Move all 12 joints from their last targets (self.joint_targets) to
+        joint_positions over `duration` s of sim time, publishing intermediate
+        targets at MOVE_RATE_HZ on a smoothstep profile. Blocks until done;
+        the final targets are exactly joint_positions.
+
+        Args:
+            joint_positions (list): 12 joint positions, ordered as all_joint_names
+            duration (float): Seconds (sim time) the move takes
+        """
+        start = list(self.joint_targets)
+        steps = max(1, int(round(duration * MOVE_RATE_HZ)))
+        rate = rospy.Rate(MOVE_RATE_HZ)
+        for i in range(1, steps + 1):
+            s = float(i) / steps
+            blend = s * s * (3.0 - 2.0 * s)
+            self.move_all_joints([a + blend * (b - a) for a, b in zip(start, joint_positions)])
+            if rospy.is_shutdown():
+                break
+            rate.sleep()
 
     def _get_obs(self):
         """
@@ -840,13 +875,12 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
                 hips[leg - 1] = hip
                 knees[leg - 1] = knee
 
-        # Execute joint movement
-        self.move_all_joints(hips + knees)
         # Hip offsets from STAND_POSE
         self.joint_positions = [hip - stand for hip, stand in zip(hips, STAND_POSE[:6])]
-        
-        # Wait for the robot to execute the movement
-        time.sleep(0.1)
+
+        # Move smoothly to the new targets; this takes MOVE_DURATION s of sim
+        # time and is the step's wait
+        self.move_all_joints_smoothly(hips + knees)
     
     def _get_obs(self):
         """
