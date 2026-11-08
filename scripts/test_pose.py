@@ -2,9 +2,11 @@
 """
 Try a Gurdy stance by hand.
 
-Sends 12 joint angles to the position controllers, waits 2 s (sim time),
-then prints commanded vs actual angle for every joint (from
-/gurdy/joint_states) and the base roll, pitch and height from /gurdy/odom.
+Sends 12 joint angles to the position controllers, waits 3 s (sim time),
+then samples /gurdy/joint_states and /gurdy/odom for 1 s. Prints, per
+joint, the commanded angle, mean actual angle, mean error and standard
+deviation (a large std means the joint is oscillating), then the mean and
+std of base roll, pitch and height and the x, y drift over that second.
 
 Angles are in radians, ordered upper legs M1-M6, then lower legs M1-M6
 (the same order as NEUTRAL_POSE in env.py). Limits: upper -1.55..0,
@@ -27,7 +29,14 @@ from std_srvs.srv import Empty
 
 UPPER_LIMITS = (-1.55, 0.0)
 LOWER_LIMITS = (-2.9, 1.5708)
-SETTLE_TIME = 2.0  # s
+SETTLE_TIME = 3.0  # s
+SAMPLE_TIME = 1.0  # s
+
+
+def mean_std(values):
+    """Mean and population standard deviation of a non-empty list."""
+    m = sum(values) / len(values)
+    return m, math.sqrt(sum((v - m) ** 2 for v in values) / len(values))
 
 
 def roll_pitch(q):
@@ -81,24 +90,60 @@ def main():
     rospy.loginfo("Sent angles, waiting %.0f s...", SETTLE_TIME)
     rospy.sleep(SETTLE_TIME)
 
-    states = rospy.wait_for_message("/gurdy/joint_states", JointState, timeout=5.0)
-    odom = rospy.wait_for_message("/gurdy/odom", Odometry, timeout=5.0)
-    actual = dict(zip(states.name, states.position))
+    # Record every message that arrives during the sample window
+    joint_samples = {j: [] for j in joints}
+    odom_samples = []  # (roll, pitch, x, y, z)
+    recording = [True]
 
-    print("%-30s %8s %8s %8s" % ("joint", "cmd", "actual", "error"))
+    def on_joints(msg):
+        if recording[0]:
+            for name, pos in zip(msg.name, msg.position):
+                if name in joint_samples:
+                    joint_samples[name].append(pos)
+
+    def on_odom(msg):
+        if recording[0]:
+            p = msg.pose.pose.position
+            roll, pitch = roll_pitch(msg.pose.pose.orientation)
+            odom_samples.append((roll, pitch, p.x, p.y, p.z))
+
+    subs = [rospy.Subscriber("/gurdy/joint_states", JointState, on_joints),
+            rospy.Subscriber("/gurdy/odom", Odometry, on_odom)]
+    rospy.loginfo("Sampling for %.0f s...", SAMPLE_TIME)
+    rospy.sleep(SAMPLE_TIME)
+    recording[0] = False
+    for sub in subs:
+        sub.unregister()
+
+    n_joint = max(len(v) for v in joint_samples.values())
+    print("%d joint_states samples, %d odom samples over %.1f s" % (
+        n_joint, len(odom_samples), SAMPLE_TIME))
+    print("%-30s %8s %8s %8s %8s" % ("joint", "cmd", "mean", "error", "std"))
     for i, (joint, cmd) in enumerate(zip(joints, angles)):
-        if joint not in actual:
-            print("%-30s %8.3f %8s %8s  NOT IN joint_states" % (joint, cmd, "-", "-"))
+        samples = joint_samples[joint]
+        if not samples:
+            print("%-30s %8.3f %8s %8s %8s  NOT IN joint_states" % (
+                joint, cmd, "-", "-", "-"))
             continue
-        pos = actual[joint]
+        mean, std = mean_std(samples)
         lo, hi = UPPER_LIMITS if i < 6 else LOWER_LIMITS
-        note = "  OUTSIDE [%.2f, %.2f]" % (lo, hi) if not lo - 0.01 <= pos <= hi + 0.01 else ""
-        print("%-30s %8.3f %8.3f %+8.3f%s" % (joint, cmd, pos, pos - cmd, note))
+        note = ("  OUTSIDE [%.2f, %.2f]" % (lo, hi)
+                if not lo - 0.01 <= mean <= hi + 0.01 else "")
+        print("%-30s %8.3f %8.3f %+8.3f %8.4f%s" % (
+            joint, cmd, mean, mean - cmd, std, note))
 
-    roll, pitch = roll_pitch(odom.pose.pose.orientation)
-    print("roll=%.1f deg  pitch=%.1f deg  z=%.4f m" % (
-        math.degrees(roll), math.degrees(pitch), odom.pose.pose.position.z))
-
+    if not odom_samples:
+        print("No /gurdy/odom messages received")
+        return
+    rolls, pitches, xs, ys, zs = zip(*odom_samples)
+    roll_m, roll_s = mean_std(rolls)
+    pitch_m, pitch_s = mean_std(pitches)
+    z_m, z_s = mean_std(zs)
+    print("roll  = %6.1f deg  (std %.2f deg)" % (math.degrees(roll_m), math.degrees(roll_s)))
+    print("pitch = %6.1f deg  (std %.2f deg)" % (math.degrees(pitch_m), math.degrees(pitch_s)))
+    print("z     = %.4f m    (std %.4f m)" % (z_m, z_s))
+    print("drift over %.1f s: dx=%+.4f m  dy=%+.4f m  (at x=%.3f y=%.3f)" % (
+        SAMPLE_TIME, xs[-1] - xs[0], ys[-1] - ys[0], xs[-1], ys[-1]))
 
 if __name__ == "__main__":
     main()
