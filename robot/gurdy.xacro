@@ -36,17 +36,34 @@
          spin about each leg's own long axis, which no joint drives. Do not
          "correct" these back to the formula values. -->
 
-    <!-- Joint limits. Worst-case static torque, one leg holding the whole
-         robot (7.07 N) at full 0.12 m reach: ~0.85 N*m (hip), ~0.42 N*m
-         (knee, 0.06 m reach). With three feet down it is about a third of
-         that (~0.28 / ~0.14 N*m), so 1.0 N*m is a ~3.5x margin at the
-         hip and still covers the whole robot on one leg. Under the p=10
-         controllers it saturates at ~0.1 rad of error. 0.3 N*m was tried
-         but saturated and the legs sagged short of their targets. The
-         earlier blow-up at 1.0 N*m was traced to integral windup and the
-         0.005 rad/s velocity limit, both since fixed (i_clamp 0.1,
-         velocity 5.0). -->
-    <xacro:property name="joint_effort" value="1.0"/>
+    <!-- Joint effort limit, N*m.
+
+         The old static estimate (one leg holding the whole 7.07 N robot at
+         full reach: ~0.85 N*m hip, ~0.42 N*m knee; ~0.28 / ~0.14 N*m with
+         three feet down) is correct for gravity. Gravity just isn't what
+         the motors spend their torque on in the sim. Standing in
+         GROUND_OUT, knee M1's controller asked for -3.2 N*m against a 1.0
+         limit: P +6.8 from a 0.68 rad error, D -10 from 33.6 rad/s of
+         chatter. What the estimate leaves out:
+           - The PID demand, not the load, sets the torque. p=10 asks for
+             1 N*m at only 0.1 rad of error, so any disturbance saturates
+             the joint, and while it is saturated it cannot correct the
+             error. The legs then sag to wherever gravity and the
+             clamped torque balance (the old crouch, not the target).
+           - The D term reacting to knee chatter adds tens of N*m of
+             demand on its own.
+           - Passive joint damping costs torque at speed: 0.05 N*m*s/rad
+             at 33.6 rad/s is 1.7 N*m, more than the old limit.
+           - Six planted feet with mu=10 cannot slip, so any mismatch
+             between the commanded foot positions and the real geometry
+             makes the legs push against each other. Those internal
+             forces are bounded only by friction, not by body weight.
+         3.0 N*m gives P room to correct ~0.3 rad before saturating. The
+         chatter itself is fixed by the knee gains and damping, not by
+         this limit. The earlier blow-up at 1.0 N*m was traced to integral
+         windup and the 0.005 rad/s velocity limit, both since fixed
+         (i_clamp 0.1, velocity 5.0). -->
+    <xacro:property name="joint_effort" value="3.0"/>
     <!-- rad/s. 0.005 rad/s would need ~5 min for a 1.5 rad stroke. -->
     <xacro:property name="joint_velocity" value="5.0"/>
     <!-- Passive joint dynamics on all 12 leg joints: viscous damping in
