@@ -156,6 +156,9 @@ def apply_move(pose, move):
 # (leg None), which puts every leg in STAND_STATE. Every other action changes
 # only its own leg's pose; the other five keep theirs, so with one leg lifted
 # five still support the body. The agent builds up a gait over several steps.
+# At most one leg may be lifted at a time (see is_invalid_lift): random
+# actions that lifted several legs at once tipped the robot over within
+# 8-25 s, while the scripted gaits, which lift one leg at a time, never fell.
 #    0- 3  leg 1 LIFT, LOWER, REACH_IN, REACH_OUT
 #    4- 7  leg 2 LIFT, LOWER, REACH_IN, REACH_OUT
 #    ...
@@ -167,6 +170,15 @@ ACTIONS.append((None, STAND))
 def action_index(leg, move):
     """Index in ACTIONS of the action that applies move to leg (None for STAND)."""
     return ACTIONS.index((leg, move))
+
+def is_invalid_lift(leg_states, leg, move):
+    """
+    True if (leg, move) is a LIFT while some other leg is already lifted.
+    The env turns such an action into a no-op. LIFT on the lifted leg itself
+    is allowed (it changes nothing), as are all other moves and STAND.
+    """
+    return move == LIFT and any(
+        POSE_FLAGS[leg_states[other]][0] for other in LEGS if other != leg)
 
 def leg_joint_targets(leg_states):
     """
@@ -846,6 +858,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     # --wave-all gait needs about 290 steps to reach TARGET_FORWARD_DISTANCE,
     # which leaves a learned gait some slack.
     DEFAULT_MAX_STEPS = 400
+    # Reward for a LIFT while another leg is already lifted. The action is a
+    # no-op (see is_invalid_lift); the penalty teaches the agent not to waste
+    # steps on it.
+    INVALID_LIFT_PENALTY = -0.5
 
     def __init__(self):
         """
@@ -874,6 +890,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
         # Last action index, None until the first step of an episode
         self.last_action = None
+        # Whether the last action was an invalid lift, and how many there
+        # have been this episode (see is_invalid_lift)
+        self.invalid_lift = False
+        self.invalid_lifts = 0
         rospy.loginfo(format_foot_poses())
         # Episode step limit, shared with the training scripts' nsteps
         self.max_steps = int(rospy.get_param("/gurdy/nsteps", self.DEFAULT_MAX_STEPS))
@@ -898,9 +918,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
         self.last_action = None
+        self.invalid_lift = False
+        self.invalid_lifts = 0
         self.distance_moved = 0.0
         self._has_fallen = False
-        
+
         # Store the start point
         self.start_point = self._odom.pose.pose.position
 
@@ -922,10 +944,15 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             action (int): Action index to execute
         """
         # Update the pose of the action's leg (all legs to STAND_STATE for
-        # STAND); the other legs keep their current poses
+        # STAND); the other legs keep their current poses. A LIFT while
+        # another leg is lifted changes nothing; the step still takes
+        # MOVE_DURATION, holding the current targets.
         leg, move = ACTIONS[action]
         self.last_action = int(action)
-        if leg is None:
+        self.invalid_lift = leg is not None and is_invalid_lift(self.leg_states, leg, move)
+        if self.invalid_lift:
+            self.invalid_lifts += 1
+        elif leg is None:
             self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
         else:
             self.leg_states[leg] = apply_move(self.leg_states[leg], move)
@@ -1065,10 +1092,29 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         if done and forward_distance >= self.TARGET_FORWARD_DISTANCE:
             completion_bonus = 10.0
 
+        # Penalty for a LIFT while another leg was already lifted (a no-op)
+        invalid_lift_penalty = self.INVALID_LIFT_PENALTY if self.invalid_lift else 0.0
+
         # Calculate total reward
-        reward = progress_reward + stability_reward + energy_penalty + terminal_penalty + completion_bonus
-        
+        reward = (progress_reward + stability_reward + energy_penalty +
+                  terminal_penalty + completion_bonus + invalid_lift_penalty)
+
         return reward
+
+    def step(self, action):
+        """
+        As MyGurdySingleLegEnv.step, plus the invalid-lift bookkeeping: info
+        gets 'invalid_lift' (this step) and 'invalid_lifts' (this episode),
+        and the episode's count is logged when it ends.
+        """
+        observation, reward, done, info = super(MyGurdyWalkEnv, self).step(action)
+        info['invalid_lift'] = self.invalid_lift
+        info['invalid_lifts'] = self.invalid_lifts
+        if done:
+            rospy.loginfo("Episode invalid lifts: %d of %d steps (%.1f%%)",
+                          self.invalid_lifts, self.cumulated_steps,
+                          100.0 * self.invalid_lifts / max(1, self.cumulated_steps))
+        return observation, reward, done, info
     
     def get_forward_velocity(self):
         """
