@@ -60,6 +60,44 @@ NEUTRAL_LOWER_LEG = -2.25
 # Order matches all_joint_names: upper legs M1-M6, then lower legs M1-M6
 NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
 UPPER_LEG_LIMITS = (-1.55, 0.0)
+LOWER_LEG_LIMITS = (-2.9, 0.0)
+
+# Gait actions as (upper-leg offsets, lower-leg offsets) from NEUTRAL_POSE,
+# one value per leg M1-M6. Every joint swings only in its leg's radial
+# vertical plane, so a positive hip offset swings the thigh down toward
+# vertical and a positive knee offset unfolds the shin outward. Per leg, from
+# neutral (foot 48 mm below the hip, 19 mm outside it):
+#   hip +0.4, knee +0.4: thigh down, shin keeps its tilt -> foot 23 mm lower
+#       and 6 mm further in. The leg lengthens: it pushes that side up.
+#   hip +0.4 only: the shin tilts further in (66 deg) -> foot 20 mm in,
+#       4 mm lower. Draws the foot toward the body.
+#   knee +0.4 only: the shin tilts less (20 deg) -> foot 20 mm out, 12 mm
+#       lower. Reaches the foot out, and lengthens the leg somewhat.
+# A foot moves only radially, so a planted foot pushes the body along that
+# leg's radial line (foot out = body pushed away from it, foot in = body
+# pulled toward it). Tripod A is legs 1,3,5, tripod B legs 2,4,6.
+GAIT_OFFSET = 0.4
+TRIPOD_A = [1, 0, 1, 0, 1, 0]
+TRIPOD_B = [0, 1, 0, 1, 0, 1]
+NO_LEGS = [0] * 6
+def _scaled(mask):
+    return [GAIT_OFFSET * m for m in mask]
+GAIT_ACTIONS = [
+    # 0 Tripod A: legs 1,3,5 lengthen, lifting the body on that tripod so it
+    #   carries the weight and tripod B unloads or leaves the ground.
+    (_scaled(TRIPOD_A), _scaled(TRIPOD_A)),
+    # 1 Tripod B: the same with legs 2,4,6.
+    (_scaled(TRIPOD_B), _scaled(TRIPOD_B)),
+    # 2 Stand: all joints at NEUTRAL_POSE.
+    (_scaled(NO_LEGS), _scaled(NO_LEGS)),
+    # 3 Push A: tripod A draws its feet in while tripod B reaches its feet
+    #   out and down. B becomes the taller, loaded tripod; its planted feet
+    #   push the body away from them along their radial lines, while A's
+    #   lightly loaded feet slide in.
+    (_scaled(TRIPOD_A), _scaled(TRIPOD_B)),
+    # 4 Push B: the mirror, tripod B draws in while tripod A reaches out.
+    (_scaled(TRIPOD_B), _scaled(TRIPOD_A)),
+]
 
 class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
@@ -685,27 +723,23 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Args:
             action (int): Action index to execute
         """
-        # Upper-leg offsets from NEUTRAL_POSE (negative = leg swung further
-        # out and up). The lower legs stay at their neutral angle, so stepping
-        # never straightens the legs.
-        if action == 0:   # Tripod gait - set 1 forward, set 2 backward
-            offsets = [-0.3, 0.0, -0.3, 0.0, -0.3, 0.0]  # Legs 1,3,5 up, others neutral
-        elif action == 1: # Tripod gait - set 1 backward, set 2 forward
-            offsets = [0.0, -0.3, 0.0, -0.3, 0.0, -0.3]  # Legs 2,4,6 up, others neutral
-        elif action == 2: # Stand still
-            offsets = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]     # All legs neutral
-        elif action == 3: # Wave pattern - front to back
-            offsets = [-0.3, -0.2, -0.1, 0.0, 0.0, 0.0]  # Wave pattern
-        elif action == 4: # Wave pattern - back to front
-            offsets = [0.0, 0.0, 0.0, -0.1, -0.2, -0.3]  # Wave pattern
-
-        lower, upper = UPPER_LEG_LIMITS
-        new_joints = [min(upper, max(lower, neutral + offset))
-                      for neutral, offset in zip(NEUTRAL_POSE[:6], offsets)]
+        # Offsets from NEUTRAL_POSE for all 12 joints; see GAIT_ACTIONS
+        upper_offsets, lower_offsets = GAIT_ACTIONS[action]
+        targets = [neutral + offset for neutral, offset in
+                   zip(NEUTRAL_POSE, upper_offsets + lower_offsets)]
+        limits = [UPPER_LEG_LIMITS] * 6 + [LOWER_LEG_LIMITS] * 6
+        new_joints = []
+        for name, target, (lower, upper) in zip(self.all_joint_names, targets, limits):
+            clipped = min(upper, max(lower, target))
+            if clipped != target:
+                rospy.logwarn("Action %d: %s target %.3f clipped to %.3f"
+                              % (action, name, target, clipped))
+            new_joints.append(clipped)
 
         # Execute joint movement
-        self.move_joints(new_joints)
-        self.joint_positions = offsets
+        self.move_all_joints(new_joints)
+        # Observed joint state is the upper-leg offsets only
+        self.joint_positions = list(upper_offsets)
         
         # Wait for the robot to execute the movement
         time.sleep(0.1)
