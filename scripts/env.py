@@ -67,6 +67,17 @@ class MyGurdySingleLegEnv(gym.Env):
     # Gazebo model name of the ground; only head contacts with it count as falls
     GROUND_MODEL_NAME = "ground_plane"
 
+    # After a reset the robot must be level and still before an episode starts:
+    # |roll| and |pitch| below STABLE_TILT_DEG, and base speeds below the limits
+    # below, held for STABLE_HOLD_TIME s. If that doesn't happen within
+    # STABLE_TIMEOUT s (sim time) the reset is redone, up to RESET_MAX_TRIES.
+    STABLE_TILT_DEG = 10.0
+    STABLE_MAX_LINEAR_SPEED = 0.01    # m/s
+    STABLE_MAX_ANGULAR_SPEED = 0.1    # rad/s
+    STABLE_HOLD_TIME = 0.3            # s
+    STABLE_TIMEOUT = 3.0              # s
+    RESET_MAX_TRIES = 3
+
     def __init__(self):
         """
         Initialize the Gurdy single leg environment
@@ -398,6 +409,31 @@ class MyGurdySingleLegEnv(gym.Env):
     
     def _set_init_pose(self):
         """
+        Reset the robot into NEUTRAL_POSE and wait until it is level and still.
+        If it hasn't stabilised within STABLE_TIMEOUT s, redo the reset, up to
+        RESET_MAX_TRIES times. Each attempt is logged.
+        """
+        for attempt in range(1, self.RESET_MAX_TRIES + 1):
+            self._reset_pose_once()
+            stable = self._wait_for_stable(self.STABLE_TIMEOUT)
+
+            roll, pitch = self.get_roll_pitch()
+            msg = "Reset attempt %d/%d: %s (roll=%.1f deg, pitch=%.1f deg, z=%.4f m)" % (
+                attempt, self.RESET_MAX_TRIES,
+                "stable" if stable else "not stable after %.1f s" % self.STABLE_TIMEOUT,
+                math.degrees(roll), math.degrees(pitch),
+                self._odom.pose.pose.position.z)
+            if stable:
+                rospy.loginfo(msg)
+                return True
+            rospy.logwarn(msg)
+
+        rospy.logerr("Robot did not stabilise after %d reset attempts; "
+                     "starting the episode anyway", self.RESET_MAX_TRIES)
+        return False
+
+    def _reset_pose_once(self):
+        """
         Put the robot back at its spawn pose, standing in NEUTRAL_POSE.
 
         /gazebo/reset_world only resets the model pose, not the joint angles,
@@ -429,16 +465,8 @@ class MyGurdySingleLegEnv(gym.Env):
             # back to their previous targets once physics resumes
             self.move_all_joints(NEUTRAL_POSE)
         finally:
-            # Always unpause, or the sim-time sleep below would never return
+            # Always unpause, or the sim-time wait that follows never returns
             self._call_empty_service('/gazebo/unpause_physics', self._unpause_srv)
-
-        # Wait for the robot to settle
-        self._wait_for_settle()
-
-        roll, pitch = self.get_roll_pitch()
-        rospy.loginfo("Post-reset pose: roll=%.1f deg, pitch=%.1f deg, z=%.4f m",
-                      math.degrees(roll), math.degrees(pitch),
-                      self._odom.pose.pose.position.z)
 
     def _call_empty_service(self, name, proxy):
         """
@@ -461,24 +489,60 @@ class MyGurdySingleLegEnv(gym.Env):
         roll, pitch, _ = euler_from_quaternion([q.x, q.y, q.z, q.w])
         return roll, pitch
 
-    def _wait_for_settle(self, settle_time=1.0):
+    def _is_stable(self):
         """
-        Give the robot time to come to rest, then block until fresh odometry
-        and model states arrive so readings reflect the settled pose.
+        True if the base is nearly level and nearly still, from the latest
+        odometry.
+        """
+        roll, pitch = self.get_roll_pitch()
+        max_tilt = math.radians(self.STABLE_TILT_DEG)
+        lin = self._odom.twist.twist.linear
+        ang = self._odom.twist.twist.angular
+        linear_speed = math.sqrt(lin.x ** 2 + lin.y ** 2 + lin.z ** 2)
+        angular_speed = math.sqrt(ang.x ** 2 + ang.y ** 2 + ang.z ** 2)
+        return (abs(roll) < max_tilt and abs(pitch) < max_tilt and
+                linear_speed < self.STABLE_MAX_LINEAR_SPEED and
+                angular_speed < self.STABLE_MAX_ANGULAR_SPEED)
+
+    def _wait_for_stable(self, timeout):
+        """
+        Block until the robot has stayed stable (see _is_stable) for
+        STABLE_HOLD_TIME s, or until timeout s of sim time have passed.
+        Also refreshes the model states so the head height is current.
 
         Args:
-            settle_time (float): Seconds (sim time) to wait before reading sensors
+            timeout (float): Seconds (sim time) to wait
+
+        Returns:
+            bool: True if the robot stabilised in time
         """
-        rospy.sleep(settle_time)
-        try:
-            self._odom = rospy.wait_for_message("/gurdy/odom", Odometry, timeout=5.0)
-        except rospy.ROSException:
-            rospy.logwarn("No fresh odometry after reset; using last message")
+        start = rospy.Time.now()
+        deadline = start + rospy.Duration(timeout)
+        stable_since = None
+        stable = False
+        # The callback keeps self._odom current between checks (odometry is
+        # 10 Hz, so the hold time spans several fresh messages)
+        rate = rospy.Rate(50)
+        while not rospy.is_shutdown():
+            now = rospy.Time.now()
+            if self._odom.header.stamp >= start and self._is_stable():
+                if stable_since is None:
+                    stable_since = now
+                if (now - stable_since).to_sec() >= self.STABLE_HOLD_TIME:
+                    stable = True
+                    break
+            else:
+                stable_since = None
+            if now >= deadline:
+                break
+            rate.sleep()
+
         try:
             self._model_states_callback(
                 rospy.wait_for_message("/gazebo/model_states", ModelStates, timeout=5.0))
         except rospy.ROSException:
             rospy.logwarn("No fresh model states after reset; using last message")
+        return stable
 
     def _init_env_variables(self):
         """
