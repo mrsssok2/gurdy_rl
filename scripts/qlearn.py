@@ -60,17 +60,23 @@ class QLearn:
             # Normal update for regular states
             self.q[state][action] = oldv + self.alpha * (reward + value - oldv)
 
-    def learn(self, state1, action1, reward, state2):
+    def learn(self, state1, action1, reward, state2, done=False):
         """
         Main learning method
-        
-        Implements Q-learning update rule with max Q-value of next state
+
+        Implements Q-learning update rule with max Q-value of next state.
+        If done, state2 is terminal and the target is just the reward.
         """
-        # Find maximum Q-value for next state
-        maxqnew = max([self.getQ(state2, a) for a in self.actions])
-        
+        if done:
+            # Terminal transition: nothing to bootstrap from
+            future_value = 0.0
+        else:
+            # Find maximum Q-value for next state
+            maxqnew = max([self.getQ(state2, a) for a in self.actions])
+            future_value = self.gamma * maxqnew
+
         # Update Q-value
-        self.learnQ(state1, action1, reward, self.gamma * maxqnew)
+        self.learnQ(state1, action1, reward, future_value)
 
     def chooseAction(self, state):
         """

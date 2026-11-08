@@ -359,7 +359,8 @@ def main():
             new_state = convert_obs_to_state(new_observation)
             
             # Learn
-            qlearn_agent.learn(state, action, reward, new_state)
+            # Don't bootstrap from new_state when the episode has ended
+            qlearn_agent.learn(state, action, reward, new_state, done)
             
             # Update state and reward
             state = new_state
