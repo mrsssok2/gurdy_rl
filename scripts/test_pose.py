@@ -8,6 +8,16 @@ joint, the commanded angle, mean actual angle, mean error and standard
 deviation (a large std means the joint is oscillating), then the mean and
 std of base roll, pitch and height and the x, y drift over that second.
 
+It also samples each position controller's /state over the same second and
+prints, per joint, the mean effort command (the PID output before Gazebo
+clamps it to the joint's effort limit), the mean |command|, and the mean
+|velocity| (process_value_dot). Flags:
+    SATURATED  mean |command| within 5% of the effort limit (or above it):
+               the joint is torque-limited and cannot correct its error
+    CHATTER    mean |velocity| > 1 rad/s while it should be standing still:
+               high-frequency vibration, usually a D gain that is too high
+The effort limits are read from /robot_description.
+
 Angles are in radians, ordered upper legs M1-M6, then lower legs M1-M6
 (the same order as NEUTRAL_POSE in env.py). Limits: upper -1.55..0,
 lower -2.9..0; out-of-range values are clipped with a warning.
@@ -24,8 +34,10 @@ reset env.py uses), so the legs are in place before the feet touch down.
 import argparse
 import math
 import sys
+import xml.etree.ElementTree as ET
 
 import rospy
+from control_msgs.msg import JointControllerState
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
@@ -36,6 +48,26 @@ UPPER_LIMITS = (-1.55, 0.0)
 LOWER_LIMITS = (-2.9, 0.0)
 SETTLE_TIME = 3.0  # s
 SAMPLE_TIME = 1.0  # s
+SATURATION_FRACTION = 0.95  # flag SATURATED at mean |command| >= 95% of the limit
+CHATTER_VELOCITY = 1.0  # rad/s; flag CHATTER above this mean |velocity|
+
+
+def effort_limits(joints):
+    """
+    {joint: effort limit in N*m} from the <limit effort=...> tags in
+    /robot_description. Joints that are missing are left out.
+    """
+    try:
+        root = ET.fromstring(rospy.get_param("/robot_description"))
+    except (KeyError, ET.ParseError) as e:
+        rospy.logwarn("Could not read effort limits from /robot_description: %s", e)
+        return {}
+    limits = {}
+    for joint in root.iter("joint"):
+        limit = joint.find("limit")
+        if joint.get("name") in joints and limit is not None and limit.get("effort"):
+            limits[joint.get("name")] = float(limit.get("effort"))
+    return limits
 
 
 def mean_std(values):
@@ -116,8 +148,18 @@ def main():
             roll, pitch = roll_pitch(msg.pose.pose.orientation)
             odom_samples.append((roll, pitch, p.x, p.y, p.z))
 
+    # (command, process_value_dot) per joint from its controller's /state
+    state_samples = {j: [] for j in joints}
+
+    def on_state(msg, joint):
+        if recording[0]:
+            state_samples[joint].append((msg.command, msg.process_value_dot))
+
     subs = [rospy.Subscriber("/gurdy/joint_states", JointState, on_joints),
             rospy.Subscriber("/gurdy/odom", Odometry, on_odom)]
+    subs += [rospy.Subscriber("/gurdy/%s_position_controller/state" % j,
+                              JointControllerState, on_state, callback_args=j)
+             for j in joints]
     rospy.loginfo("Sampling for %.0f s...", SAMPLE_TIME)
     rospy.sleep(SAMPLE_TIME)
     recording[0] = False
@@ -140,6 +182,32 @@ def main():
                 if not lo - 0.01 <= mean <= hi + 0.01 else "")
         print("%-30s %8.3f %8.3f %+8.3f %8.4f%s" % (
             joint, cmd, mean, mean - cmd, std, note))
+
+    limits = effort_limits(joints)
+    print("")
+    print("Controller effort and velocity (effort = PID output before clamping)")
+    print("%-30s %8s %8s %8s %8s  %s" % (
+        "joint", "effort", "|effort|", "limit", "|vel|", "flags"))
+    for joint in joints:
+        samples = state_samples[joint]
+        if not samples:
+            print("%-30s %8s %8s %8s %8s  NO /state MESSAGES" % (
+                joint, "-", "-", "-", "-"))
+            continue
+        commands, velocities = zip(*samples)
+        effort = sum(commands) / len(commands)
+        abs_effort = sum(abs(c) for c in commands) / len(commands)
+        abs_vel = sum(abs(v) for v in velocities) / len(velocities)
+        limit = limits.get(joint)
+        flags = []
+        if limit is not None and abs_effort >= SATURATION_FRACTION * limit:
+            flags.append("SATURATED")
+        if abs_vel > CHATTER_VELOCITY:
+            flags.append("CHATTER")
+        print("%-30s %+8.3f %8.3f %8s %8.3f  %s" % (
+            joint, effort, abs_effort,
+            "%.2f" % limit if limit is not None else "?", abs_vel,
+            " ".join(flags)))
 
     if not odom_samples:
         print("No /gurdy/odom messages received")
