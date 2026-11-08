@@ -18,6 +18,7 @@ from sensor_msgs.msg import JointState
 from nav_msgs.msg import Odometry
 from gazebo_msgs.msg import ContactsState, ModelStates
 
+import leg_kinematics
 from reset_pose import reset_to_pose
 
 # Define a function to convert quaternion to Euler angles
@@ -55,12 +56,13 @@ def euler_from_quaternion(quaternion):
 # the body centre). The hips are at the bottom of their range, so gait
 # offsets must be positive (thigh swung back down toward vertical).
 # Try alternatives by hand with scripts/test_pose.py.
-NEUTRAL_UPPER_LEG = -1.50
-NEUTRAL_LOWER_LEG = -2.25
+# The angles, the limits and the leg IK live in leg_kinematics.py.
+NEUTRAL_UPPER_LEG = leg_kinematics.NEUTRAL_HIP
+NEUTRAL_LOWER_LEG = leg_kinematics.NEUTRAL_KNEE
 # Order matches all_joint_names: upper legs M1-M6, then lower legs M1-M6
 NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
-UPPER_LEG_LIMITS = (-1.55, 0.0)
-LOWER_LEG_LIMITS = (-2.9, 0.0)
+UPPER_LEG_LIMITS = leg_kinematics.HIP_LIMITS
+LOWER_LEG_LIMITS = leg_kinematics.KNEE_LIMITS
 
 # Gait actions, built around the leg layout. Each leg's hip and knee swing
 # only in its radial vertical plane (its "spoke"). Spoke directions in the
