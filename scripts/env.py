@@ -16,6 +16,7 @@ import tf
 from sensor_msgs.msg import JointState
 from nav_msgs.msg import Odometry
 from gazebo_msgs.msg import ContactsState, ModelStates
+from std_srvs.srv import Empty
 
 # Define a function to convert quaternion to Euler angles
 def euler_from_quaternion(quaternion):
@@ -108,6 +109,9 @@ class MyGurdySingleLegEnv(gym.Env):
         
         # Add a bumper contact sensor to detect falls
         rospy.Subscriber("/gurdy/head_bumper", ContactsState, self._bumper_callback)
+        
+        # Service used to put the robot back at its spawn pose on every reset
+        self._reset_world_srv = rospy.ServiceProxy('/gazebo/reset_world', Empty)
         
         # Wait for publishers to connect
         self._check_publishers_connection()
@@ -260,17 +264,20 @@ class MyGurdySingleLegEnv(gym.Env):
         Returns:
             list: Initial observation
         """
+        # Put the robot back at its spawn pose
+        self._reset_world()
+
+        # Move joints to initial position and wait for the robot to settle
+        self._set_init_pose()
+
         # Reset ROS-related variables
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.base_position = self._odom.pose.pose.position
         self.start_point = self.base_position
         self.cumulated_steps = 0
         self.cumulated_reward = 0
-        self._has_fallen = False  # Reset fallen state
-        
-        # Move joints to initial position
-        self._set_init_pose()
-        
+        self._has_fallen = False  # Ignore contacts from the reset itself
+
         # Initialize environment variables
         self._init_env_variables()
         
@@ -327,10 +334,40 @@ class MyGurdySingleLegEnv(gym.Env):
         # Initial position - centered joints
         initial_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.move_joints(initial_joints)
-        
-        # Wait for the joints to settle
-        time.sleep(0.1)
-    
+
+        # Wait for the robot to settle
+        self._wait_for_settle()
+
+    def _reset_world(self):
+        """
+        Reset model poses in Gazebo so the robot returns to its spawn pose.
+        Uses /gazebo/reset_world (not reset_simulation) so sim time keeps running.
+        """
+        rospy.wait_for_service('/gazebo/reset_world')
+        try:
+            self._reset_world_srv()
+        except rospy.ServiceException as e:
+            rospy.logerr("/gazebo/reset_world call failed: %s", e)
+
+    def _wait_for_settle(self, settle_time=1.0):
+        """
+        Give the robot time to come to rest, then block until fresh odometry
+        and model states arrive so readings reflect the settled pose.
+
+        Args:
+            settle_time (float): Seconds (sim time) to wait before reading sensors
+        """
+        rospy.sleep(settle_time)
+        try:
+            self._odom = rospy.wait_for_message("/gurdy/odom", Odometry, timeout=5.0)
+        except rospy.ROSException:
+            rospy.logwarn("No fresh odometry after reset; using last message")
+        try:
+            self._model_states_callback(
+                rospy.wait_for_message("/gazebo/model_states", ModelStates, timeout=5.0))
+        except rospy.ROSException:
+            rospy.logwarn("No fresh model states after reset; using last message")
+
     def _init_env_variables(self):
         """
         Initialize environment variables
@@ -446,10 +483,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Initial position - centered joints
         initial_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.move_joints(initial_joints)
-        
-        # Wait for the joints to settle
-        time.sleep(0.1)
-        
+
+        # Wait for the robot to settle so the height below is the resting height
+        self._wait_for_settle()
+
         # Store initial height
         if self._model_states:
             try:
