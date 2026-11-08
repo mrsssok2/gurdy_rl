@@ -455,6 +455,12 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     """
     Environment for training the Gurdy robot to walk
     """
+    # Reward per metre of forward (+x) progress; negative when moving backwards
+    PROGRESS_WEIGHT = 20.0
+    # Maximum per-step reward for staying upright (was 5.0, which made
+    # standing still worth far more than walking)
+    UPRIGHT_BONUS = 0.2
+
     def __init__(self):
         """
         Initialize the Gurdy walk environment
@@ -506,7 +512,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         
         # Store the start point
         self.start_point = self._odom.pose.pose.position
-    
+
+        # x position at the previous step, used for per-step forward progress
+        self.prev_x = self.start_point.x
+
     def _set_action(self, action):
         """
         Convert actions to joint movements
@@ -607,39 +616,43 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             float: Calculated reward
         """
         # Extract values from observations
-        linear_speed = observations[6]
-        distance = observations[7]
         head_height = observations[8]
-        
+
         # Big penalty if the robot has fallen
         if fallen:
             return -100.0
-        
-        # Reward for speed (forward movement)
-        speed_reward = linear_speed
-        
-        # Reward for distance traveled
-        distance_reward = 0.1 * distance
-        
-        # Reward for maintaining height (stability)
+
+        # Forward progress along +x this step (signed: moving backwards is
+        # penalised). Uses ground-truth odometry rather than the abs speed and
+        # Euclidean distance in the observation, which reward any direction.
+        current_x = self._odom.pose.pose.position.x
+        delta_x = current_x - self.prev_x
+        self.prev_x = current_x
+        progress_reward = self.PROGRESS_WEIGHT * delta_x
+
+        # Net forward displacement over the episode so far
+        forward_distance = current_x - self.start_point.x
+
+        # Small bonus for staying upright. Kept well below what walking earns,
+        # so standing still is not the best strategy.
         height_ratio = head_height / max(0.01, self.initial_height)  # Avoid division by zero
-        stability_reward = 5.0 * min(1.0, height_ratio)  # Cap at 1.0
-        
+        stability_reward = self.UPRIGHT_BONUS * min(1.0, height_ratio)  # Cap at 1.0
+
         # Penalty for excessive joint movement (energy efficiency)
         energy_penalty = -0.05 * sum([abs(angle) for angle in observations[0:6]])
-        
-        # Penalty for episode ending with little distance
+
+        # Penalty for episode ending with little forward progress
         terminal_penalty = 0
-        if done and distance < 1.0 and not fallen:
+        if done and forward_distance < 1.0:
             terminal_penalty = -1.0
-        
-        # Bonus for reaching the target
+
+        # Bonus for reaching the target by walking forward
         completion_bonus = 0
-        if done and distance >= 5.0:
+        if done and forward_distance >= 5.0:
             completion_bonus = 10.0
-        
+
         # Calculate total reward
-        reward = speed_reward + distance_reward + stability_reward + energy_penalty + terminal_penalty + completion_bonus
+        reward = progress_reward + stability_reward + energy_penalty + terminal_penalty + completion_bonus
         
         return reward
     
