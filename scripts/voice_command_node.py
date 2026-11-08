@@ -4,7 +4,7 @@ Execute voice commands on Gurdy (in Gazebo, through MyGurdyWalkEnv-v0).
 
 Subscribes /gurdy/voice_command (std_msgs/String, JSON, see voice_walk.py):
     {"action": "walk_forward", "distance_m": 0.2, "mode": "rl" | "scripted", "id": "..."}
-    {"action": "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
+    {"action": "walk_backward" | "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
     {"action": "stop"}   {"action": "status"}
 and publishes exactly one JSON result per command on /gurdy/voice_feedback,
 with the command's action and id, so a client can wait for it with
@@ -18,11 +18,14 @@ mode "rl" it acts greedily with the Keras DQN model at ~rl_model_path
 if the policy makes less than 5 mm of progress over 32 steps or the model
 cannot be loaded; the result says so (fallback, fallback_reason).
 
-walk_left / walk_right step the scripted side-step gait of test_gait.py
-(--left / --right) until the robot has moved distance_m along world +y / -y
-(at most 0.5 m), with the same stop, stuck, fall and step-limit handling.
-There is no RL for sideways walks. Their distance_m is the sideways
-distance, and it counts toward total_distance_m like a forward walk's. Walks
+walk_backward steps the --wave-all gait mirrored front to back
+(test_gait.py --wave-all --mirror) until the robot has moved distance_m
+along -forward (world -x). walk_left / walk_right step the scripted
+side-step gait of test_gait.py (--left / --right) until the robot has moved
+distance_m along world +y / -y. All three go at most 0.5 m, with the same
+stop, stuck, fall and step-limit handling, and are scripted only (no RL).
+Their distance_m is along their own direction, and it counts toward
+total_distance_m like a forward walk's. Walks
 start from wherever the robot stands; the sim is reset only at startup
 (~reset_on_start) and after a fall (~reset_on_fall).
 
@@ -64,6 +67,10 @@ class EnvRobot(object):
 
     def forward(self):
         return self.walk.get_forward_position()
+
+    def backward(self):
+        """Position along -forward."""
+        return -self.walk.get_forward_position()
 
     def lateral(self):
         """Sideways position, world y (positive to the left)."""
@@ -121,13 +128,16 @@ class VoiceCommandNode(object):
                 [gurdy_env.action_index(leg, move) for leg, move in moves])
         # One gait per walk action, each keeping its own phase
         self.gaits = {"walk_forward": scripted(gait_moves(wave_all=True, mirror=False)),
+                      "walk_backward": scripted(gait_moves(wave_all=True, mirror=True)),
                       "walk_left": scripted(side_gait(right=False)),
                       "walk_right": scripted(side_gait(right=True))}
         # Position along each walk's direction, and its scripted gait's speed
         self.positions = {"walk_forward": self.robot.forward,
+                          "walk_backward": self.robot.backward,
                           "walk_left": self.robot.lateral,
                           "walk_right": self.robot.right}
         self.m_per_step = {"walk_forward": voice_walk.SCRIPTED_M_PER_STEP,
+                           "walk_backward": voice_walk.BACKWARD_M_PER_STEP,
                            "walk_left": voice_walk.SIDE_M_PER_STEP,
                            "walk_right": voice_walk.SIDE_M_PER_STEP}
         if rospy.get_param("~reset_on_start", True):
@@ -236,7 +246,8 @@ class VoiceCommandNode(object):
         action = cmd["action"]
         position = self.positions[action]
         policy = None
-        # Sideways walks are always scripted (parse_command sets their mode)
+        # Backward and sideways walks are always scripted (parse_command sets
+        # their mode)
         if cmd["mode"] == "rl" and self.load_model() is not None:
             policy = self.greedy_action
         self.robot.begin()
@@ -277,7 +288,8 @@ class VoiceCommandNode(object):
             self.busy = False
         self.publish(cmd, **result)
 
-    DIRECTIONS = {"walk_forward": "forward", "walk_left": "left", "walk_right": "right"}
+    DIRECTIONS = {"walk_forward": "forward", "walk_backward": "backward",
+                  "walk_left": "left", "walk_right": "right"}
 
     @classmethod
     def describe(cls, result, action="walk_forward"):

@@ -94,6 +94,30 @@ class StateTest(unittest.TestCase):
         self.assertIn("fallback", rows["result"])
         self.assertEqual(rows["heard"], "गरदी आगे बीस सेंटीमीटर चलो।")
 
+    def test_backward_target(self):
+        s = make_state()
+        at(s, 0.0, 1.0, 0.5)
+        s.command(json.dumps({"action": "walk_backward", "distance_m": 0.2, "mode": "rl",
+                              "id": "b"}))
+        self.assertEqual(s.status(), ds.WALKING)
+        # Behind the robot, and scripted whatever mode was sent
+        self.assertEqual(s.target_point(), (0.8, 0.5))
+        self.assertEqual(s.mode_label(), "scripted")
+        self.assertEqual(s.command_text, "walk_backward 0.20 m (scripted)")
+        at(s, 1.0, 0.95, 0.53)
+        self.assertAlmostEqual(s.walk_progress()[0], 0.05)
+        self.assertAlmostEqual(s.total_distance(), 0.05)
+        s.feedback(json.dumps({"action": "walk_backward", "id": "b", "status": "stopped",
+                               "distance_m": 0.07, "requested_m": 0.2,
+                               "mode_used": "scripted", "total_distance_m": 0.07}))
+        self.assertEqual(s.status(), ds.STOPPED)
+        self.assertIsNone(s.target_point())
+        # forward_sign -1: forward is world -x, so backward is +x
+        s = ds.DashboardState(forward_sign=-1)
+        at(s, 0.0, 1.0, 0.5)
+        s.command(json.dumps({"action": "walk_backward", "distance_m": 0.3, "id": "c"}))
+        self.assertEqual(s.target_point(), (1.3, 0.5))
+
     def test_sideways_target(self):
         s = make_state()
         at(s, 0.0, 1.0, 0.5)

@@ -4,7 +4,7 @@ unit-tested offline (scripts/tests/test_voice_walk.py).
 
 Commands arrive as JSON on /gurdy/voice_command:
     {"action": "walk_forward", "distance_m": 0.2, "mode": "rl" | "scripted", "id": "..."}
-    {"action": "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
+    {"action": "walk_backward" | "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
     {"action": "stop", "id": "..."}
     {"action": "status", "id": "..."}
 "id" is optional and echoed back in the feedback so the client can match it.
@@ -15,17 +15,21 @@ requested distance. In "scripted" mode it steps the --wave-all gait. In
 RL_MIN_PROGRESS of forward progress over RL_WINDOW steps (or there is no
 policy) it switches to the scripted gait for the rest of the distance.
 
-walk_left / walk_right step the scripted side-step gait (test_gait.py
---left / --right) until the robot has moved distance_m along +y / -y. They
-are scripted only: there is no sideways RL policy, so their mode is always
-"scripted" (a requested mode is accepted and ignored).
+walk_backward steps the --wave-all gait mirrored front to back
+(test_gait.py --wave-all --mirror) until the robot has moved distance_m
+along -forward. walk_left / walk_right step the scripted side-step gait
+(test_gait.py --left / --right) until it has moved distance_m along +y / -y.
+These three are scripted only: the RL policy was trained to walk forward,
+so their mode is always "scripted" (a requested mode is accepted and
+ignored).
 """
 import json
 import math
 from collections import deque
 
-WALK_ACTIONS = ("walk_forward", "walk_left", "walk_right")
-SIDE_ACTIONS = ("walk_left", "walk_right")
+WALK_ACTIONS = ("walk_forward", "walk_backward", "walk_left", "walk_right")
+# Walks with no RL policy
+SCRIPTED_ONLY_ACTIONS = ("walk_backward", "walk_left", "walk_right")
 ACTIONS = WALK_ACTIONS + ("stop", "status")
 MODES = ("rl", "scripted")
 DEFAULT_DISTANCE_M = 0.2
@@ -46,6 +50,11 @@ SCRIPTED_M_PER_STEP = 0.546 / 320
 # --wave-all, so about 0.77 * 1.7 = 1.3 mm per step. Measure it with
 # `test_gait.py N --left` and update this.
 SIDE_M_PER_STEP = SCRIPTED_M_PER_STEP * (4.0 / 24) / (4 * math.cos(math.radians(30)) / 16)
+# Backward gait (--wave-all --mirror), assumed as fast as --wave-all since
+# Gurdy is front/back symmetric. Not yet measured; note that --wave --mirror
+# made only 0.037 m against --wave's 0.14 m (README Baseline). Measure with
+# `test_gait.py 20 --wave-all --mirror` and update this.
+BACKWARD_M_PER_STEP = SCRIPTED_M_PER_STEP
 STEP_MARGIN = 64
 
 # Result statuses
@@ -61,7 +70,7 @@ def parse_command(data):
     Validate a voice_command JSON string. Returns a dict with action, id and,
     for the walks, distance_m (clamped to (0, MAX_DISTANCE_M], default
     DEFAULT_DISTANCE_M) and mode (default "scripted"; always "scripted" for
-    walk_left / walk_right). Raises ValueError.
+    walk_backward / walk_left / walk_right). Raises ValueError.
     """
     try:
         msg = json.loads(data)
@@ -85,7 +94,7 @@ def parse_command(data):
         mode = msg.get("mode", "scripted")
         if mode not in MODES:
             raise ValueError("unknown mode %r (expected rl or scripted)" % (mode,))
-        cmd["mode"] = "scripted" if action in SIDE_ACTIONS else mode
+        cmd["mode"] = "scripted" if action in SCRIPTED_ONLY_ACTIONS else mode
     return cmd
 
 

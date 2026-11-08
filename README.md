@@ -80,6 +80,13 @@ the joint tracking error after every action. It ignores the env's own episode
 end (stuck, goal, step limit) and stops only on a fall or after N cycles.
 `test_gait.py --poses` prints the foot poses and their IK joint angles.
 
+Gurdy is front/back symmetric, so `test_gait.py 20 --wave-all --mirror` is the
+backward walk: the front legs (2, then 5) push OUT and the back legs (4, then
+1) pull IN. With `--mirror` the script reports the backward distance and the
+y drift. It has not been measured in Gazebo yet. `--wave --mirror` made much
+less than `--wave` (above), so check that the mirrored `--wave-all` really
+matches the forward gait before relying on `voice_walk.BACKWARD_M_PER_STEP`.
+
 Gurdy's feet move only along their radial spokes, so it cannot turn, but it
 can step sideways. `test_gait.py 10 --left` walks toward +y: leg 6 (270°)
 pushes OUT, leg 3 (90°) pulls IN, then the diagonal pairs 1 OUT / 4 IN and
@@ -135,6 +142,7 @@ Commands (the wake word "Gurdy" is optional):
 | "Gurdy, aage bees centimeter chalo" / "गरदी आगे बीस सेंटीमीटर चलो" | Walk 20 cm forward. Default 20 cm, at most 50 cm. Number words (das, bees, tees, pachaas, ...), digits and metres work too |
 | "Gurdy, baayen bees centimeter chalo" / "गरदी बाएं बीस सेंटीमीटर चलो" | Step 20 cm left (+y) with the scripted side-step gait (no RL). Same distances and 50 cm cap |
 | "daayen tees cm chalo" / "दाएँ तीस सेंटीमीटर चलो" | Step 30 cm right (-y) |
+| "peeche bees cm chalo" / "पीछे बीस सेंटीमीटर चलो" / "go back" | Walk 20 cm backward with the mirrored `--wave-all` gait (no RL). Same distances and 50 cm cap |
 | "ruko" / "रुक जाओ" / "stop" | Stop the walk. While Gurdy walks, press Enter first to speak |
 | "kitna chala" / "कितना चला" / "status" | Total distance walked, and whether Gurdy is walking |
 | "RL mode" / "आर एल मोड" | Walk with the trained DQN policy |
@@ -144,8 +152,8 @@ In RL mode the node acts greedily with the DQN model. If the policy makes less
 than 5 mm of progress over 32 steps, or no model is loaded, the node switches
 to the scripted gait for the rest of the walk, and the reply says so.
 
-A sentence with a direction Gurdy cannot walk (peeche / back, upar, neeche),
-a turn (mudo, ghoomo, turn), or two directions ("aage baayen") is not
+A sentence with a direction Gurdy cannot walk (upar, neeche), a turn (mudo,
+ghoomo, turn), or two directions ("aage baayen", "aage peeche") is not
 understood rather than treated as a forward walk; the reply lists what works.
 
 In terminal 1 (container), start Gazebo:

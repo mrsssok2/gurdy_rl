@@ -2,25 +2,26 @@
 Hindi/Hinglish and English.
 
 parse(transcript) returns a dict with at least
-    intent     "walk_forward" | "walk_left" | "walk_right" | "stop" | "status"
-               | "mode" | "reset" | "unknown"
+    intent     "walk_forward" | "walk_backward" | "walk_left" | "walk_right"
+               | "stop" | "status" | "mode" | "reset" | "unknown"
     wake_word  True if the transcript started with (or contained) "Gurdy"
     text       the transcript as given
 plus, per intent:
-    walk_forward, walk_left, walk_right
+    walk_forward, walk_backward, walk_left, walk_right
                   distance_m, distance_cm, defaulted (no distance heard),
                   capped (asked for more than MAX_CM)
     mode          mode: "rl" | "scripted"
     unknown       unsupported: the direction or turn word heard, if that is
-                  why ("peeche", "turn", ...)
+                  why ("upar", "turn", ...)
 
 Example: "गरदी आगे बीस सेंटीमीटर चलो।" -> walk_forward, 0.2 m;
-"gurdy baayen bees cm chalo" -> walk_left, 0.2 m.
+"gurdy baayen bees cm chalo" -> walk_left, 0.2 m;
+"peeche das cm chalo" -> walk_backward, 0.1 m.
 
-Gurdy's feet move only along their spokes, so it can walk forward and
-sideways but not back (no gait yet) or turn. A sentence with a direction or
-turn word it cannot do ("peeche chalo", "baayen mudo"), or with two
-directions ("aage baayen"), is unknown rather than a forward walk.
+Gurdy's feet move only along their spokes, so it can walk forward, backward
+and sideways but not turn. A sentence with a direction or turn word it
+cannot do ("upar chalo", "baayen mudo"), or with two directions ("aage
+baayen", "aage peeche"), is unknown rather than a forward walk.
 
 The wake word is optional. Intents are checked in the order reset, stop,
 status, mode, walk, so "kitna aage chala?" is a status question and "ruko, aage mat
@@ -79,10 +80,11 @@ RIGHT_WORDS = {
 }
 # Directions and turns Gurdy cannot do: heard alone or with a walk, the
 # command is unknown, never a forward walk
+BACKWARD_WORDS = {
+    "पीछे", "पीछें", "peeche", "piche", "peechhe", "pichhe",
+    "back", "backward", "backwards", "reverse", "बैक",
+}
 UNSUPPORTED_WORDS = {
-    # back
-    "पीछे", "पीछें", "peeche", "piche", "peechhe", "pichhe", "back", "backward",
-    "backwards", "reverse", "बैक",
     # up / down
     "ऊपर", "upar", "oopar", "up", "नीचे", "neeche", "niche", "down",
     # turns
@@ -90,6 +92,9 @@ UNSUPPORTED_WORDS = {
     "mudo", "muro", "mud", "modo", "ghoomo", "ghumo", "ghum", "turn", "rotate",
     "टर्न",
 }
+# Each walk intent and the words that pick it
+DIRECTION_WORDS = (("walk_forward", FORWARD_WORDS), ("walk_backward", BACKWARD_WORDS),
+                   ("walk_left", LEFT_WORDS), ("walk_right", RIGHT_WORDS))
 WALK_VERBS = {
     "चलो", "चल", "चलिए", "चलें", "बढ़ो", "बढ़ो", "बढ़", "जाओ",
     "chalo", "chal", "chaliye", "badho", "barho", "jao", "walk", "move", "go",
@@ -243,14 +248,13 @@ def parse(transcript):
     if unsupported:
         result.update(intent="unknown", unsupported=unsupported[0])
         return result
-    directions = [intent for intent, words in (("walk_forward", FORWARD_WORDS),
-                                               ("walk_left", LEFT_WORDS),
-                                               ("walk_right", RIGHT_WORDS))
+    directions = [intent for intent, words in DIRECTION_WORDS
                   if any(t in words for t in tokens)]
     if len(directions) > 1:
         # "aage baayen": a diagonal, which no gait does
+        all_words = set().union(*(words for _, words in DIRECTION_WORDS))
         result.update(intent="unknown", unsupported=" ".join(
-            t for t in tokens if t in FORWARD_WORDS | LEFT_WORDS | RIGHT_WORDS))
+            t for t in tokens if t in all_words))
         return result
     walk_verb = any(t in WALK_VERBS for t in tokens)
     cm = find_distance_cm(tokens)

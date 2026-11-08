@@ -17,6 +17,32 @@ def walk(action, status, distance_m, **extra):
                 requested_m=0.2, mode_used="scripted", fallback=False, **extra)
 
 
+class BackwardReplyTest(unittest.TestCase):
+    def test_done(self):
+        self.assertEqual(
+            build_reply(parse("peeche bees cm chalo"), walk("walk_backward", "done", 0.2031)),
+            "Main ek AI assistant hoon. Main bees centimeter peeche chala.")
+
+    def test_other_statuses(self):
+        parsed = parse("peeche chalo")
+        self.assertEqual(build_reply(parsed, walk("walk_backward", "stopped", 0.1)),
+                         "Main ek AI assistant hoon. Main ruk gaya. Main das centimeter "
+                         "peeche chala.")
+        fallen = build_reply(parsed, walk("walk_backward", "fallen", 0.05, reset=True))
+        self.assertIn("Main paanch centimeter peeche chalne ke baad gir gaya.", fallen)
+        self.assertIn("Main peeche nahi badh paaya, sirf teen centimeter chala.",
+                      build_reply(parsed, walk("walk_backward", "stuck", 0.03)))
+        self.assertIn("ulti taraf", build_reply(parsed, walk("walk_backward", "stuck", -0.02)))
+
+    def test_stop_during_backward_walk(self):
+        self.assertIn("Main aath centimeter peeche chala.",
+                      build_reply(parse("ruko"), walk("walk_backward", "stopped", 0.08)))
+
+    def test_capped(self):
+        reply = build_reply(parse("peeche ek meter"), walk("walk_backward", "done", 0.5))
+        self.assertIn("pachaas centimeter tak hi", reply)
+
+
 class SideReplyTest(unittest.TestCase):
     def test_done(self):
         self.assertEqual(
@@ -55,7 +81,8 @@ class SideReplyTest(unittest.TestCase):
             "Main ek AI assistant hoon. Gurdy bees centimeter aage chala, normal mode mein.")
 
     def test_unsupported_direction(self):
-        self.assertIn("sirf aage, baayen ya daayen", build_reply(parse("peeche chalo")))
+        self.assertIn("Gurdy sirf aage, peeche, baayen ya daayen chal sakta hai.",
+                      build_reply(parse("upar chalo")))
         self.assertIn("samajh nahi aaya", build_reply(parse("namaste")))
 
 
@@ -68,7 +95,12 @@ class MakeCommandTest(unittest.TestCase):
 
     def test_forward_and_unknown(self):
         self.assertEqual(make_command(parse("aage chalo"), "rl")["mode"], "rl")
-        self.assertIsNone(make_command(parse("peeche chalo"), "rl"))
+        self.assertIsNone(make_command(parse("upar chalo"), "rl"))
+
+    def test_backward_has_no_mode(self):
+        cmd = make_command(parse("peeche das cm chalo"), "rl")
+        self.assertEqual((cmd["action"], cmd["distance_m"]), ("walk_backward", 0.1))
+        self.assertNotIn("mode", cmd)
 
 
 if __name__ == "__main__":

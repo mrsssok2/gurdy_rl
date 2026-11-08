@@ -58,8 +58,8 @@ class ParseCommandTest(unittest.TestCase):
         self.assertEqual(vw.parse_command(
             '{"action": "walk_forward", "distance_m": -1}')["distance_m"], 0.2)
 
-    def test_side_walks_are_scripted(self):
-        for action in ("walk_left", "walk_right"):
+    def test_side_and_backward_walks_are_scripted(self):
+        for action in ("walk_backward", "walk_left", "walk_right"):
             cmd = vw.parse_command(json.dumps(
                 {"action": action, "distance_m": 0.9, "mode": "rl", "id": "s"}))
             self.assertEqual(cmd, {"action": action, "distance_m": 0.5,

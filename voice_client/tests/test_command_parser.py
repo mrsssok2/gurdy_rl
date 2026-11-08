@@ -136,16 +136,42 @@ class SidewaysTest(unittest.TestCase):
         self.assertEqual(parse("kitna baayen chala")["intent"], "status")
 
 
+class BackwardTest(unittest.TestCase):
+    def assertBack(self, text, cm, defaulted=False, capped=False):
+        result = parse(text)
+        self.assertEqual(result["intent"], "walk_backward", (text, result))
+        self.assertAlmostEqual(result["distance_cm"], cm, msg=text)
+        self.assertAlmostEqual(result["distance_m"], cm / 100.0, msg=text)
+        self.assertEqual((result["defaulted"], result["capped"]), (defaulted, capped), text)
+        return result
+
+    def test_words(self):
+        for word in ("पीछे", "peeche", "piche", "back", "backward", "reverse", "Back"):
+            self.assertBack("Gurdy %s bees centimeter chalo" % word, 20)
+
+    def test_devanagari_sentence(self):
+        result = self.assertBack("गरदी पीछे बीस सेंटीमीटर चलो।", 20)
+        self.assertTrue(result["wake_word"])
+
+    def test_distance_parsing_and_cap(self):
+        self.assertBack("go back twenty five cm", 25)
+        self.assertBack("पीछे ३० सेमी", 30)
+        self.assertBack("peeche ek meter chalo", 50, capped=True)
+        self.assertBack("reverse 0.1 m", 10)
+        self.assertBack("peeche chalo", 20, defaulted=True)
+
+    def test_stop_reset_and_status_win(self):
+        self.assertEqual(parse("ruko, peeche mat jao")["intent"], "stop")
+        self.assertEqual(parse("kitna peeche chala")["intent"], "status")
+        # "wapas" stays a reset, not a backward walk
+        self.assertEqual(parse("Gurdy wapas")["intent"], "reset")
+
+
 class UnsupportedDirectionTest(unittest.TestCase):
     def assertUnknown(self, text, word):
         result = parse(text)
         self.assertEqual(result["intent"], "unknown", (text, result))
         self.assertEqual(result["unsupported"], word, text)
-
-    def test_back_is_not_forward(self):
-        self.assertUnknown("Gurdy peeche bees cm chalo", "peeche")
-        self.assertUnknown("पीछे बीस सेंटीमीटर चलो", "पीछे")
-        self.assertUnknown("go back twenty cm", "back")
 
     def test_turns(self):
         self.assertUnknown("baayen mudo", "mudo")
@@ -159,6 +185,8 @@ class UnsupportedDirectionTest(unittest.TestCase):
     def test_two_directions(self):
         self.assertUnknown("aage baayen chalo", "aage baayen")
         self.assertUnknown("left right", "left right")
+        self.assertUnknown("aage peeche chalo", "aage peeche")
+        self.assertUnknown("peeche baayen", "peeche baayen")
 
     def test_plain_unknown_has_no_unsupported(self):
         self.assertNotIn("unsupported", parse("namaste"))

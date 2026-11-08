@@ -50,7 +50,7 @@ RETRY_DELAYS = (1.0, 2.0, 4.0)  # after a 429 (one request at a time per account
 # Seconds to wait for a non-walk reply; walks use robot_link.walk_timeout
 REPLY_TIMEOUT = 20.0
 
-WALK_INTENTS = ("walk_forward", "walk_left", "walk_right")
+WALK_INTENTS = ("walk_forward", "walk_backward", "walk_left", "walk_right")
 
 
 def banner(stage, text=""):
@@ -133,13 +133,13 @@ def play_wav(wav_bytes):
 def make_command(parsed, mode):
     """
     voice_command JSON dict for a parsed walk/stop/status, else None.
-    Sideways walks carry no mode: they are always scripted.
+    Backward and sideways walks carry no mode: they are always scripted.
     """
     intent = parsed["intent"]
     cmd = {"id": uuid.uuid4().hex[:8]}
     if intent == "walk_forward":
         cmd.update(action="walk_forward", distance_m=parsed["distance_m"], mode=mode)
-    elif intent in ("walk_left", "walk_right"):
+    elif intent in ("walk_backward", "walk_left", "walk_right"):
         cmd.update(action=intent, distance_m=parsed["distance_m"])
     elif intent in ("stop", "status"):
         cmd["action"] = intent
@@ -218,7 +218,7 @@ class VoiceDemo(object):
                 print("[ROBOT] walking... press Enter to speak a stop", flush=True)
             if not walking:
                 timeout = REPLY_TIMEOUT
-            elif cmd["action"] == "walk_forward":
+            elif cmd["action"] in ("walk_forward", "walk_backward"):
                 timeout = walk_timeout(cmd["distance_m"])
             else:
                 timeout = walk_timeout(cmd["distance_m"], speed=SIDE_WALK_SPEED)

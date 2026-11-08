@@ -33,10 +33,10 @@ CSV_FIELDS = ["time_s", "x", "y", "z", "yaw_deg", "roll_deg", "pitch_deg", "stat
 MODE_LABELS = {"rl": "RL", "scripted": "scripted", "rl+scripted": "RL -> scripted"}
 
 # Walk actions and their direction in the world, as a unit (x, y) vector;
-# forward is multiplied by forward_sign. Sideways is world +y / -y, as the
-# node measures it (env.get_lateral_position).
-WALK_DIRECTIONS = {"walk_forward": (1.0, 0.0), "walk_left": (0.0, 1.0),
-                   "walk_right": (0.0, -1.0)}
+# forward and backward are multiplied by forward_sign. Sideways is world
+# +y / -y, as the node measures it (env.get_lateral_position).
+WALK_DIRECTIONS = {"walk_forward": (1.0, 0.0), "walk_backward": (-1.0, 0.0),
+                   "walk_left": (0.0, 1.0), "walk_right": (0.0, -1.0)}
 
 
 def quaternion_to_rpy(qx, qy, qz, qw):
@@ -149,11 +149,11 @@ class DashboardState(object):
         if action in WALK_DIRECTIONS and self.walk is None and self.x is not None:
             target = float(cmd.get("distance_m", 0.2))
             dx, dy = WALK_DIRECTIONS[action]
+            dx *= self.forward_sign
             if action == "walk_forward":
-                dx *= self.forward_sign
                 mode = cmd.get("mode", "scripted")
             else:
-                mode = "scripted"  # sideways walks have no RL
+                mode = "scripted"  # backward and sideways walks have no RL
             self.walk = {
                 "id": cmd.get("id"), "action": action, "target_m": target, "mode": mode,
                 "start": (self.x, self.y), "direction": (dx, dy),

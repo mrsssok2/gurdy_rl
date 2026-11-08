@@ -32,8 +32,11 @@ spoke; one moving IN pulls the body toward it. Spokes: 1 = 210 deg,
 --wave-all (+x): the --wave strokes, then the front legs pull IN, leg 5
     (pulls toward 30 deg) then leg 2 (toward -30 deg)
 --mirror mirrors the legs across the y axis (1 <-> 2, 4 <-> 5), so the gait
-should move about as far toward -x: legs 2 and 5 push OUT, and with
---wave-all legs 4 and 1 then pull IN.
+should move about as far backward (-x): legs 2 and 5 push OUT, and with
+--wave-all legs 4 and 1 then pull IN. Gurdy is front/back symmetric, so
+--wave-all --mirror is the backward walk (voice walk_backward). With
+--mirror the report gives the backward distance (-forward) instead of the
+forward one.
 
 Sideways (the feet move only along their spokes, so Gurdy cannot turn, but
 it can translate along y):
@@ -48,7 +51,7 @@ it can translate along y):
 --right (-y): the --left gait mirrored across the x axis (3 <-> 6,
     1 <-> 4, 2 <-> 5).
 For these the report gives the sideways position (world y) instead of the
-forward one.
+forward one, and the x drift; forward and backward walks report the y drift.
 
 The env's own episode-end checks (stuck, goal, step limit) are reported but
 ignored; the run stops only on a fall or after N cycles.
@@ -57,6 +60,7 @@ Usage (with Gazebo and the controllers running):
     rosrun my_gurdy_description test_gait.py 20 --wave
     rosrun my_gurdy_description test_gait.py 20 --wave --mirror
     rosrun my_gurdy_description test_gait.py 20 --wave-all --hold 0.3
+    rosrun my_gurdy_description test_gait.py 20 --wave-all --mirror   # backward
     rosrun my_gurdy_description test_gait.py 10 --left
     rosrun my_gurdy_description test_gait.py 10 --right
     rosrun my_gurdy_description test_gait.py --poses   # print the IK angles only
@@ -102,7 +106,7 @@ def gait(wave_all, mirror):
     moves = []
     for leg, push in strokes:
         moves += stroke(MIRROR_LEG[leg] if mirror else leg, push)
-    return moves, ("-x" if mirror else "+x")
+    return moves, ("-x, backward" if mirror else "+x")
 
 
 def side_gait(right):
@@ -206,22 +210,29 @@ def main():
                   % ((label, move) + error))
         return info["fallen"], info["fall_reason"], done
 
-    # Sideways gaits report world y (and the x drift), the others forward
-    axis = "sideways" if sideways else "forward"
-    position = walk.get_lateral_position if sideways else walk.get_forward_position
+    # Distance along the gait's direction, and the drift across it:
+    # sideways gaits report world y and the x drift, the others forward (or
+    # backward with --mirror) and the y drift
+    if sideways:
+        axis, position = "sideways", walk.get_lateral_position
+        across, across_position = "x", walk.get_forward_position
+    else:
+        axis = "backward" if args.mirror else "forward"
+        sign = -1.0 if args.mirror else 1.0
+        position = lambda: sign * walk.get_forward_position()  # noqa: E731
+        across, across_position = "y", walk.get_lateral_position
 
     def report(label, previous):
         distance = position() - start[0]
         roll, pitch = walk.get_roll_pitch()
-        drift = ("  x drift %+7.4f m" % (walk.get_forward_position() - start[1])
-                 if sideways else "")
-        print("%-8s %s %+8.4f m  (%+7.4f this cycle)%s  roll %+6.1f deg  pitch %+6.1f deg"
-              % (label, axis, distance, distance - previous, drift,
-                 math.degrees(roll), math.degrees(pitch)))
+        print("%-8s %s %+8.4f m  (%+7.4f this cycle)  %s drift %+7.4f m  "
+              "roll %+6.1f deg  pitch %+6.1f deg"
+              % (label, axis, distance, distance - previous, across,
+                 across_position() - start[1], math.degrees(roll), math.degrees(pitch)))
         return distance
 
     walk.reset()
-    start = (position(), walk.get_forward_position())
+    start = (position(), across_position())
     distance = report("reset", 0.0)
 
     env_done_reported = False

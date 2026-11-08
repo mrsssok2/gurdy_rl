@@ -121,9 +121,9 @@ def install_stubs():
 
     def gait(wave_all, mirror):
         moves = []
-        for leg in (1, 4, 5, 2):
+        for leg in ((2, 5, 4, 1) if mirror else (1, 4, 5, 2)):
             moves += [(leg, "LIFT"), (leg, "REACH_IN"), (leg, "LOWER"), (leg, "REACH_OUT")]
-        return moves, "+x"
+        return moves, "-x" if mirror else "+x"
 
     def side_gait(right):
         moves = []
@@ -232,6 +232,60 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(result["status"], "fallen")
         self.assertTrue(result["reset"])
         self.assertEqual(self.walk.resets, 2)
+
+    def test_walk_backward(self):
+        self.walk.heading = (-1.0, 0.0)
+        self.send(action="walk_backward", distance_m=0.1, mode="rl", id="b1")
+        self.run_queued()
+        [result] = self.feedback()
+        self.assertEqual((result["action"], result["id"], result["status"]),
+                         ("walk_backward", "b1", "done"))
+        # Scripted only, even when RL was asked for, and no model load
+        self.assertEqual(result["mode_used"], "scripted")
+        self.assertFalse(result["fallback"])
+        self.assertGreaterEqual(result["distance_m"], 0.1)
+        self.assertLess(self.walk.x, -0.099)
+        self.assertIn("backward", result["message"])
+        # The mirrored gait starts with leg 2 LIFT
+        self.assertEqual(self.walk.actions[0], ACTIONS.index((2, "LIFT")))
+        self.assertTrue(all(s == "GROUND_OUT" for s in self.walk.leg_states.values()))
+        self.assertGreaterEqual(result["total_distance_m"], 0.1)
+
+    def test_walk_backward_going_forward_is_stuck(self):
+        self.send(action="walk_backward", distance_m=0.2, id="b")
+        self.run_queued()
+        result = self.feedback()[-1]
+        self.assertEqual(result["status"], "stuck")
+        self.assertLess(result["distance_m"], 0)
+
+    def test_walk_backward_fall_resets(self):
+        self.walk.heading = (-1.0, 0.0)
+        self.walk.fall_at = 4
+        self.send(action="walk_backward", distance_m=0.2)
+        self.run_queued()
+        result = self.feedback()[-1]
+        self.assertEqual((result["action"], result["status"]), ("walk_backward", "fallen"))
+        self.assertTrue(result["reset"])
+
+    def test_stop_during_backward_walk(self):
+        self.walk.heading = (-1.0, 0.0)
+        self.walk.step_delay = 0.005
+        worker = threading.Thread(target=self.node.spin)
+        worker.daemon = True
+        worker.start()
+        self.send(action="walk_backward", distance_m=0.5, id="back")
+        time.sleep(0.1)
+        self.send(action="status", id="st")
+        self.send(action="stop", id="halt")
+        deadline = time.time() + 5
+        while time.time() < deadline and not any(
+                f.get("id") == "back" for f in self.feedback()):
+            time.sleep(0.01)
+        by_id = {f.get("id"): f for f in self.feedback()}
+        self.assertEqual(by_id["st"]["walking"]["action"], "walk_backward")
+        self.assertGreater(by_id["st"]["distance_m"], 0)
+        self.assertEqual((by_id["back"]["status"], by_id["back"]["stopped_by"]),
+                         ("stopped", "halt"))
 
     def test_walk_left(self):
         self.walk.heading = (0.0, 1.0)

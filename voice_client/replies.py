@@ -22,9 +22,10 @@ HINDI_NUMBERS = (
 assert len(HINDI_NUMBERS) == 101
 
 MODE_NAMES = {"rl": "RL mode", "scripted": "normal mode"}
-# Sideways walks, in romanized Hindi
-SIDE_NAMES = {"walk_left": "baayen", "walk_right": "daayen"}
-WALK_ACTIONS = ("walk_forward",) + tuple(SIDE_NAMES)
+# Backward and sideways walks (scripted only), in romanized Hindi; their
+# replies are first person
+DIRECTION_NAMES = {"walk_backward": "peeche", "walk_left": "baayen", "walk_right": "daayen"}
+WALK_ACTIONS = ("walk_forward",) + tuple(DIRECTION_NAMES)
 
 
 def number_words(n):
@@ -47,8 +48,12 @@ def distance_words(metres):
     return "%s meter" % number_words(whole)
 
 
-def _side_reply(status, dist, side, feedback, backwards):
-    """First-person reply for a sideways walk (scripted only, no fallback)."""
+def _first_person_reply(status, dist, side, feedback, backwards):
+    """
+    First-person reply for a backward or sideways walk (scripted only, no
+    fallback). side is the direction word, backwards True if the robot went
+    the opposite way.
+    """
     if status == "done":
         return "Main %s %s chala." % (dist, side)
     if status == "stopped":
@@ -75,9 +80,9 @@ def _walk_reply(feedback, parsed):
         parts.append("Gurdy ek baar mein pachaas centimeter tak hi chalta hai.")
     backwards = walked < -0.005
 
-    side = SIDE_NAMES.get(feedback.get("action"))
+    side = DIRECTION_NAMES.get(feedback.get("action"))
     if side and status != "busy":
-        text = _side_reply(status, dist, side, feedback, backwards)
+        text = _first_person_reply(status, dist, side, feedback, backwards)
         if text is None:
             return "Robot ne error diya."
         parts.append(text)
@@ -133,7 +138,7 @@ def build_reply(parsed, feedback=None, mode="scripted"):
     elif intent == "reset":
         body = "Theek hai, reset ho gaya. Naya command boliye."
     elif intent == "unknown" and parsed.get("unsupported"):
-        body = ("Gurdy sirf aage, baayen ya daayen chal sakta hai. "
+        body = ("Gurdy sirf aage, peeche, baayen ya daayen chal sakta hai. "
                 "Boliye, Gurdy baayen bees centimeter chalo.")
     elif intent == "unknown":
         body = "Yeh command samajh nahi aaya. Boliye, Gurdy aage bees centimeter chalo."
