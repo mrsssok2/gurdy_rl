@@ -2,7 +2,7 @@
 Hindi/Hinglish and English.
 
 parse(transcript) returns a dict with at least
-    intent     "walk_forward" | "stop" | "status" | "mode" | "unknown"
+    intent     "walk_forward" | "stop" | "status" | "mode" | "reset" | "unknown"
     wake_word  True if the transcript started with (or contained) "Gurdy"
     text       the transcript as given
 plus, per intent:
@@ -12,8 +12,8 @@ plus, per intent:
 
 Example: "गरदी आगे बीस सेंटीमीटर चलो।" -> walk_forward, 0.2 m.
 
-The wake word is optional. Intents are checked in the order stop, status,
-mode, walk, so "kitna aage chala?" is a status question and "ruko, aage mat
+The wake word is optional. Intents are checked in the order reset, stop,
+status, mode, walk, so "kitna aage chala?" is a status question and "ruko, aage mat
 chalo" is a stop.
 """
 
@@ -32,6 +32,9 @@ STOP_WORDS = {
     "रुको", "रुक", "रूको", "रुकें", "रुकिए", "रोको", "रुकजाओ", "थमो", "ठहरो",
     "ruko", "ruk", "rukko", "roko", "rukjao", "stop", "halt", "स्टॉप", "स्टाप",
 }
+
+# Client-side: clear a stuck "busy" state ("wapas" / "reset")
+RESET_WORDS = {"reset", "wapas", "vapas", "wapis", "vapis", "वापस", "वापिस", "रीसेट"}
 
 STATUS_WORDS = {"status", "स्टेटस", "स्टैटस"}
 # Two-word status phrases, matched as consecutive tokens
@@ -189,6 +192,9 @@ def parse(transcript):
     tokens = [t for t in tokens if t not in WAKE_WORDS]
     result = {"text": text, "wake_word": wake}
 
+    if any(t in RESET_WORDS for t in tokens):
+        result["intent"] = "reset"
+        return result
     if any(t in STOP_WORDS for t in tokens):
         result["intent"] = "stop"
         return result

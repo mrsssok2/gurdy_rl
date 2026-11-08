@@ -100,6 +100,8 @@ def build_reply(parsed, feedback=None, mode="scripted"):
     intent = parsed.get("intent")
     if intent == "mode":
         body = "Ab %s on hai." % MODE_NAMES[parsed["mode"]]
+    elif intent == "reset":
+        body = "Theek hai, reset ho gaya. Naya command boliye."
     elif intent == "unknown":
         body = "Yeh command samajh nahi aaya. Boliye, Gurdy aage bees centimeter chalo."
     elif feedback is None:

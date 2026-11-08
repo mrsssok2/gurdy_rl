@@ -91,6 +91,97 @@ class ParseEchoTest(unittest.TestCase):
         self.assertIsNone(rl.parse_feedback("ERROR: Unable to communicate with master!\n"))
         self.assertIsNone(rl.parse_feedback(""))
 
+    def test_crlf(self):
+        out = 'data: "%s"\r\n---\r\n' % json.dumps(FEEDBACK).replace('"', '\\"')
+        self.assertEqual(rl.parse_feedback(out), FEEDBACK)
+
+
+def echo_text(*msgs):
+    """rostopic echo output for these feedback dicts (escaped JSON, '---')."""
+    return "".join('data: "%s"\n---\n' % json.dumps(m).replace('"', '\\"') for m in msgs)
+
+
+class SplitEchoTest(unittest.TestCase):
+    def test_two_messages(self):
+        other = dict(FEEDBACK, id="zz99")
+        lines = echo_text(other, FEEDBACK).splitlines(True)
+        blocks = list(rl.split_echo_messages(lines))
+        self.assertEqual([rl.parse_feedback(b) for b in blocks], [other, FEEDBACK])
+
+    def test_unterminated_last_message(self):
+        lines = echo_text(FEEDBACK)[:-4].splitlines(True)  # no trailing ---
+        self.assertEqual([rl.parse_feedback(b) for b in rl.split_echo_messages(lines)],
+                         [FEEDBACK])
+
+    def test_walk_timeout(self):
+        self.assertAlmostEqual(rl.walk_timeout(0.2), 70.0)
+        self.assertAlmostEqual(rl.walk_timeout(0.5), 130.0)
+
+
+class FakeLink(rl.RobotLink):
+    """RobotLink whose docker commands run a local python stand-in instead."""
+
+    def __init__(self, echo_outputs, **kw):
+        kw.setdefault("echo_delay", 0.0)
+        rl.RobotLink.__init__(self, log=self.collect, **kw)
+        self.logged = []
+        self.echo_outputs = list(echo_outputs)  # one per echo process started
+
+    def collect(self, text):
+        self.logged.append(text)
+
+    def _argv(self, script):
+        if "rostopic echo" in script:
+            out = self.echo_outputs.pop(0) if self.echo_outputs else ""
+            # print the output slowly, then stay alive like a real echo
+            code = ("import sys,time\n"
+                    "for l in %r.splitlines(True):\n"
+                    "    sys.stdout.write(l); sys.stdout.flush(); time.sleep(0.01)\n"
+                    "sys.stderr.write('echo-err\\n')\n"
+                    "time.sleep(%s)\n" % (out, 0 if self.echo_outputs else 30))
+            return [sys.executable, "-c", code]
+        return [sys.executable, "-c", "pass"]
+
+
+class SendAndWaitTest(unittest.TestCase):
+    def test_matches_by_id(self):
+        cmd = {"id": "ab12", "action": "walk_forward"}
+        link = FakeLink([echo_text(dict(FEEDBACK, id="old1"), FEEDBACK)])
+        self.assertEqual(link.send_and_wait(cmd, timeout=10), FEEDBACK)
+        self.assertEqual(link.last_outcome, "ok")
+        self.assertTrue(any("another command" in l for l in link.logged))
+
+    def test_restarts_dead_echo_and_reports_output(self):
+        cmd = {"id": "ab12", "action": "walk_forward"}
+        link = FakeLink(["ERROR: Unable to communicate with master!\n", echo_text(FEEDBACK)])
+        self.assertEqual(link.send_and_wait(cmd, timeout=10), FEEDBACK)
+        self.assertTrue(any("echo stderr" in l and "echo-err" in l for l in link.logged))
+
+    def test_verbose_logs_raw_lines(self):
+        cmd = {"id": "ab12", "action": "status"}
+        link = FakeLink([echo_text(FEEDBACK)], verbose=True)
+        link.send_and_wait(cmd, timeout=10)
+        self.assertTrue(any(l.startswith("[echo stdout] data:") for l in link.logged))
+
+    def test_timeout(self):
+        link = FakeLink([""])
+        self.assertIsNone(link.send_and_wait({"id": "x", "action": "status"}, timeout=0.5))
+        self.assertEqual(link.last_outcome, "timeout")
+
+    def test_poll_cancels(self):
+        link = FakeLink([""])
+        self.assertIsNone(link.send_and_wait({"id": "x", "action": "walk_forward"},
+                                             timeout=10, poll=lambda: True))
+        self.assertEqual(link.last_outcome, "cancelled")
+
+    def test_status_command(self):
+        link = FakeLink([""])
+        sent = []
+        link.publish = lambda transcript=None, command=None: sent.append(command)
+        link.status(timeout=0.3)
+        self.assertEqual(sent[0]["action"], "status")
+        self.assertTrue(sent[0]["id"])
+
 
 class ReplyTest(unittest.TestCase):
     def reply(self, text, feedback=None, mode="scripted"):
@@ -148,6 +239,10 @@ class ReplyTest(unittest.TestCase):
         self.assertIn("samajh nahi", self.reply("namaste"))
         self.assertIn("jawab nahi", self.reply("aage chalo", None))
         self.assertIn("error", self.reply("aage chalo", {"status": "error"}))
+
+
+    def test_reset(self):
+        self.assertIn("reset", self.reply("Gurdy wapas"))
 
 
 if __name__ == "__main__":

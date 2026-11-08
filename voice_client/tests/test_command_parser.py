@@ -111,5 +111,15 @@ class TokenizeTest(unittest.TestCase):
         self.assertEqual(tokenize("20cm 0.5m २०सेमी"), ["20", "cm", "0.5", "m", "20", "सेमी"])
 
 
+
+class ResetTest(unittest.TestCase):
+    def test_reset_words(self):
+        for text in ("Gurdy wapas", "reset", "वापस", "vapas aao", "Gurdy reset karo"):
+            self.assertEqual(parse(text)["intent"], "reset", text)
+
+    def test_reset_wins_over_stop(self):
+        self.assertEqual(parse("ruko, reset")["intent"], "reset")
+
+
 if __name__ == "__main__":
     unittest.main()

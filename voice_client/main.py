@@ -6,13 +6,18 @@ Press Enter -> record 4 s -> Gnani STT (prisma-v3.0, hi-IN) -> parse
 (docker exec ... rostopic pub) -> wait for /gurdy/voice_feedback -> build a
 Hinglish reply (replies) -> Gnani TTS (timbre-v2.5, Poorvi, hi-en) -> play.
 
-While Gurdy walks, press Enter again to speak a stop ("Gurdy ruko").
+While Gurdy walks, press Enter again to speak a stop ("Gurdy ruko"), or
+"wapas" / "reset" to stop waiting for the robot. If no result arrives within
+distance / 5 mm/s + 30 s, the client asks the robot for its status and goes
+back to listening either way, so it never stays busy.
 
 Usage (Windows, inside the venv, with voice_demo.launch running in the container):
     $env:GNANI_API_KEY = "<your key>"
     python voice_client/main.py
     python voice_client/main.py --type          # type transcripts, no mic / STT
     python voice_client/main.py --dry-run       # print docker commands, no robot
+    python voice_client/main.py --verbose       # show raw rostopic output
+    python voice_client/robot_link.py --test-status   # test the robot link alone
 
 The API key is read only from GNANI_API_KEY and never written to disk.
 """
@@ -28,7 +33,8 @@ import requests
 
 import command_parser
 import replies
-from robot_link import DEFAULT_CONTAINER, DEFAULT_SETUP, RobotLink
+from robot_link import (DEFAULT_CONTAINER, DEFAULT_ECHO_DELAY, DEFAULT_SETUP,
+                        RobotLink, walk_timeout)
 
 try:
     import msvcrt  # Windows: listen for Enter while the robot walks
@@ -41,9 +47,7 @@ REC_SAMPLE_RATE = 16000
 TTS_SAMPLE_RATE = 24000
 RETRY_DELAYS = (1.0, 2.0, 4.0)  # after a 429 (one request at a time per account)
 
-# Seconds to wait for the robot's reply. A walk of 50 cm is ~300 steps of
-# 0.3 s sim time; leave room for a slow real-time factor.
-WALK_TIMEOUT = 300.0
+# Seconds to wait for a non-walk reply; walks use robot_link.walk_timeout
 REPLY_TIMEOUT = 20.0
 
 
@@ -143,7 +147,8 @@ class VoiceDemo(object):
         self.api_key = None if (args.type and args.no_tts) else get_api_key()
         self.mode = args.mode
         self.robot = RobotLink(container=args.container, setup=args.setup,
-                               echo_delay=args.echo_delay, dry_run=args.dry_run)
+                               echo_delay=args.echo_delay, dry_run=args.dry_run,
+                               verbose=args.verbose)
 
     def listen(self):
         """One transcript: typed (--type) or recorded and transcribed."""
@@ -163,11 +168,15 @@ class VoiceDemo(object):
             play_wav(audio)
 
     def poll_for_stop(self):
-        """While walking: Enter -> listen; send a stop if one was spoken."""
+        """
+        While walking: Enter -> listen; send a stop if one was spoken.
+        Returns True if a reset ("wapas" / "reset") was spoken, which ends
+        the wait for the walk's result.
+        """
         if msvcrt is None or not msvcrt.kbhit():
-            return
+            return False
         if msvcrt.getwch() not in ("\r", "\n"):
-            return
+            return False
         transcript = self.listen()
         banner("TRANSCRIPT", repr(transcript))
         parsed = command_parser.parse(transcript or "")
@@ -176,8 +185,13 @@ class VoiceDemo(object):
             cmd = make_command(parsed, self.mode)
             banner("COMMAND", "%s (the walk's result is the reply)" % cmd)
             self.robot.publish(transcript, cmd)
+        elif parsed["intent"] == "reset":
+            banner("RESET", "no longer waiting for the walk's result")
+            return True
         else:
-            print("[BUSY] Gurdy is walking; only a stop works now", flush=True)
+            print("[BUSY] Gurdy is walking; only a stop (ruko) or a reset (wapas) "
+                  "works now", flush=True)
+        return False
 
     def handle(self, transcript):
         banner("TRANSCRIPT", repr(transcript))
@@ -195,12 +209,35 @@ class VoiceDemo(object):
             walking = cmd["action"] == "walk_forward"
             if walking and msvcrt is not None:
                 print("[ROBOT] walking... press Enter to speak a stop", flush=True)
+            timeout = walk_timeout(cmd["distance_m"]) if walking else REPLY_TIMEOUT
             feedback = self.robot.send_and_wait(
-                cmd, transcript=transcript,
-                timeout=WALK_TIMEOUT if walking else REPLY_TIMEOUT,
+                cmd, transcript=transcript, timeout=timeout,
                 poll=self.poll_for_stop if walking else None)
-            banner("ROBOT", feedback if feedback is not None else "no reply")
+            outcome = self.robot.last_outcome
+            if outcome == "cancelled":
+                parsed = {"intent": "reset"}
+            elif feedback is None and walking and outcome == "timeout":
+                parsed, feedback = self.after_walk_timeout(parsed, timeout)
+            banner("ROBOT", feedback if feedback is not None else "no reply (%s)" % outcome)
         self.say(replies.build_reply(parsed, feedback, self.mode))
+
+    def after_walk_timeout(self, parsed, timeout):
+        """
+        No walk result within timeout: ask the robot for its status. Returns
+        (parsed, feedback) for the reply. If the robot is idle, its last
+        result stands in for the walk's; if it is still walking, the reply
+        is its status. Either way the client stops waiting.
+        """
+        banner("TIMEOUT", "no walk result after %.0f s; asking the robot for its status"
+               % timeout)
+        status = self.robot.status(timeout=REPLY_TIMEOUT)
+        banner("STATUS", status if status is not None else "no reply")
+        if status is None or status.get("status") == "error":
+            return parsed, status
+        last = status.get("last_result")
+        if status.get("status") == "idle" and isinstance(last, dict):
+            return parsed, dict(last, action="walk_forward", from_status=True)
+        return {"intent": "status"}, status
 
     def run(self):
         print("Gurdy voice demo. Mode: %s. Container: %s%s" % (
@@ -232,10 +269,12 @@ def main():
                     help="walk mode at start; say 'RL mode' / 'normal mode' to switch")
     ap.add_argument("--container", default=DEFAULT_CONTAINER)
     ap.add_argument("--setup", default=DEFAULT_SETUP, help="setup.bash in the container")
-    ap.add_argument("--echo-delay", type=float, default=2.0,
+    ap.add_argument("--echo-delay", type=float, default=DEFAULT_ECHO_DELAY,
                     help="s to let rostopic echo subscribe before publishing")
     ap.add_argument("--type", action="store_true", help="type transcripts instead of speaking")
     ap.add_argument("--no-tts", action="store_true", help="print replies only")
+    ap.add_argument("--verbose", action="store_true",
+                    help="print the raw stdout/stderr of the docker exec rostopic calls")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the docker commands instead of running them")
     VoiceDemo(ap.parse_args()).run()
