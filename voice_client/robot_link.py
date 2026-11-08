@@ -23,6 +23,11 @@ import threading
 import time
 import uuid
 
+try:
+    import yaml
+except ImportError:  # the hand-written parser below is the fallback
+    yaml = None
+
 COMMAND_TOPIC = "/gurdy/voice_command"
 TRANSCRIPT_TOPIC = "/gurdy/voice_transcript"
 FEEDBACK_TOPIC = "/gurdy/voice_feedback"
@@ -73,26 +78,56 @@ def docker_argv(container, setup, script):
             "source %s && { %s; }" % (setup, script)]
 
 
+def _yaml_escapes_to_json(text):
+    """Turn the YAML-only escapes in a double-quoted body into JSON ones."""
+    yaml_only = {" ": " ", "\t": "\\t", "/": "/", "0": "\\u0000",
+                 "e": "\\u001b", "a": "\\u0007", "v": "\\u000b"}
+
+    def sub(m):
+        return yaml_only.get(m.group(1), m.group(0))
+    return re.sub(r"\\(.)", sub, text)
+
+
 def _unquote_double(body):
     """Value of a YAML double-quoted scalar's body (may span folded lines)."""
     lines = body.split("\n")
     text = lines[0]
     for line in lines[1:]:
-        if text.endswith("\\") and not text.endswith("\\\\"):
+        if re.search(r"(?<!\\)(?:\\\\)*\\$", text):
             text = text[:-1] + line.lstrip()  # escaped line break: no space
         else:
             text += " " + line.strip()
-    return json.loads('"' + text + '"')
+    return json.loads('"' + _yaml_escapes_to_json(text) + '"')
 
 
-def parse_echo_data(output):
-    """
-    The `data` string of the first message in `rostopic echo` output for a
-    std_msgs/String, or None. Handles double-quoted, single-quoted and plain
-    YAML scalars, including values folded over several lines.
-    """
-    output = output.replace("\r\n", "\n")
-    match = re.search(r"^data:[ \t]*(.*?)(?:^---|^\.\.\.\s*$|\Z)", output, re.S | re.M)
+def _message_text(output):
+    """The first message in `rostopic echo` output: its lines up to "---"."""
+    lines = []
+    for line in output.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if line.strip() == "---":
+            if any(l.strip() for l in lines):
+                break
+            lines = []
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _parse_echo_data_yaml(text):
+    """data via PyYAML, or None if text isn't a mapping with a data key."""
+    try:
+        msg = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if isinstance(msg, dict) and "data" in msg:
+        data = msg["data"]
+        return "" if data is None else str(data)
+    return None
+
+
+def _parse_echo_data_manual(text):
+    """Fallback without PyYAML: double-, single-quoted and plain scalars."""
+    match = re.search(r"^data:[ \t]*(.*?)(?:^\.\.\.\s*$|\Z)", text, re.S | re.M)
     if not match:
         return None
     value = match.group(1).strip()
@@ -106,6 +141,23 @@ def parse_echo_data(output):
     if value.startswith("'") and value.endswith("'") and len(value) >= 2:
         return " ".join(l.strip() for l in value[1:-1].split("\n")).replace("''", "'")
     return " ".join(l.strip() for l in value.split("\n"))
+
+
+def parse_echo_data(output):
+    """
+    The `data` string of the first message in `rostopic echo` output for a
+    std_msgs/String, or None. rostopic prints the message as YAML and wraps
+    long strings over several lines (a trailing backslash is an escaped line
+    break, backslash-space an escaped space), so the message's lines (up to
+    "---") are joined and parsed with yaml.safe_load. A hand-written parser
+    is the fallback if PyYAML is missing or fails.
+    """
+    text = _message_text(output)
+    if yaml is not None:
+        data = _parse_echo_data_yaml(text)
+        if data is not None:
+            return data
+    return _parse_echo_data_manual(text)
 
 
 def parse_feedback(output):

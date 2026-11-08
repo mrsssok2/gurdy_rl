@@ -91,6 +91,46 @@ class ParseEchoTest(unittest.TestCase):
         self.assertIsNone(rl.parse_feedback("ERROR: Unable to communicate with master!\n"))
         self.assertIsNone(rl.parse_feedback(""))
 
+    # Verbatim `rostopic echo` stdout from a real 0.2 m walk: the string is
+    # wrapped with escaped line breaks, and one continuation line starts with
+    # an escaped space ("\ ").
+    REAL_WALK = (
+        'data: "{\\"requested_m\\": 0.2, \\"mode_requested\\": \\"scripted\\", \\"fallback\\": false, \\"\\\n'
+        '  steps\\": 132, \\"status\\": \\"done\\", \\"distance_m\\": 0.2034, \\"mode_used\\": \\"scripted\\"\\\n'
+        '  , \\"message\\": \\"done: walked 0.203 m of 0.200 m in 132 steps, mode scripted\\",\\\n'
+        '  \\ \\"total_distance_m\\": 0.2034, \\"action\\": \\"walk_forward\\", \\"id\\": \\"ffd872ef\\"\\\n'
+        '  }"\n'
+        '---\n')
+    REAL_WALK_FEEDBACK = {
+        "requested_m": 0.2, "mode_requested": "scripted", "fallback": False, "steps": 132,
+        "status": "done", "distance_m": 0.2034, "mode_used": "scripted",
+        "message": "done: walked 0.203 m of 0.200 m in 132 steps, mode scripted",
+        "total_distance_m": 0.2034, "action": "walk_forward", "id": "ffd872ef"}
+
+    STATUS = ('data: "{\\"status\\": \\"idle\\", \\"roll_deg\\": 0.3, \\"pitch_deg\\": -1.2,'
+              ' \\"action\\": \\"status\\", \\"id\\": \\"5e0c1a2b\\"}"\n---\n')
+    STATUS_FEEDBACK = {"status": "idle", "roll_deg": 0.3, "pitch_deg": -1.2,
+                       "action": "status", "id": "5e0c1a2b"}
+
+    def test_real_walk_output(self):
+        self.assertEqual(rl.parse_feedback(self.REAL_WALK), self.REAL_WALK_FEEDBACK)
+
+    def test_real_walk_output_split_by_listener(self):
+        lines = (self.STATUS + self.REAL_WALK).splitlines(True)
+        blocks = list(rl.split_echo_messages(lines))
+        self.assertEqual([rl.parse_feedback(b) for b in blocks],
+                         [self.STATUS_FEEDBACK, self.REAL_WALK_FEEDBACK])
+
+    def test_real_walk_output_without_yaml(self):
+        saved, rl.yaml = rl.yaml, None
+        try:
+            self.assertEqual(rl.parse_feedback(self.REAL_WALK), self.REAL_WALK_FEEDBACK)
+        finally:
+            rl.yaml = saved
+
+    def test_status_output(self):
+        self.assertEqual(rl.parse_feedback(self.STATUS), self.STATUS_FEEDBACK)
+
     def test_crlf(self):
         out = 'data: "%s"\r\n---\r\n' % json.dumps(FEEDBACK).replace('"', '\\"')
         self.assertEqual(rl.parse_feedback(out), FEEDBACK)
