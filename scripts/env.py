@@ -835,8 +835,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     # Episode ends once the robot has walked this far forward, in metres
     TARGET_FORWARD_DISTANCE = 0.5
     # The robot is "stuck" if it gains less than STUCK_MIN_PROGRESS metres of
-    # forward progress over the last STUCK_WINDOW steps
-    STUCK_WINDOW = 30
+    # forward progress over the last STUCK_WINDOW steps. 64 steps are four
+    # 16-step --wave-all cycles (19.2 s of sim time), which leaves room to
+    # explore before a gait works. The scripted --wave gait, the slowest that
+    # walks (+0.14 m over 160 steps), makes about 56 mm in 64 steps.
+    STUCK_WINDOW = 64
     STUCK_MIN_PROGRESS = 0.005
     # Episode step limit when /gurdy/nsteps is not set. Each step is
     # MOVE_DURATION (0.3 s) of sim time, so 300 steps are 90 s. The scripted
