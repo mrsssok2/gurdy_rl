@@ -14,6 +14,7 @@ matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plotting
 # Make sure environment is registered
 import env
 from output_paths import get_outdir
+from training_params import get_nepisodes
 
 # Set up the live plot
 plt.ion()  # Turn on interactive mode
@@ -220,8 +221,8 @@ def main():
     update_interval = rospy.get_param("/gurdy/update_interval", 2048)  # Steps between PPO updates
     
     # Number of episodes and steps
-    nepisodes = rospy.get_param("/gurdy/nepisodes", 20)
-    nsteps = rospy.get_param("/gurdy/nsteps", 200)
+    nepisodes = get_nepisodes(20)
+    nsteps = rospy.get_param("/gurdy/nsteps", 300)
     save_model_freq = rospy.get_param("/gurdy/save_model_freq", 100)
     
     # Set state and action sizes

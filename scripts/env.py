@@ -817,6 +817,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     # forward progress over the last STUCK_WINDOW steps
     STUCK_WINDOW = 30
     STUCK_MIN_PROGRESS = 0.005
+    # Episode step limit when /gurdy/nsteps is not set. Each step is
+    # MOVE_DURATION (0.3 s) of sim time, so 300 steps are 90 s. The scripted
+    # --wave-all gait needs about 290 steps to reach TARGET_FORWARD_DISTANCE.
+    DEFAULT_MAX_STEPS = 300
 
     def __init__(self):
         """
@@ -840,6 +844,8 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Current target foot pose of each leg (see ACTIONS)
         self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
         rospy.loginfo(format_foot_poses())
+        # Episode step limit, shared with the training scripts' nsteps
+        self.max_steps = int(rospy.get_param("/gurdy/nsteps", self.DEFAULT_MAX_STEPS))
         self.distance_moved = 0.0
         self.initial_height = 0.0  # Initial height of the robot
         
@@ -961,7 +967,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
                 return True
         
         # Check for maximum number of steps
-        if self.cumulated_steps >= 200:
+        if self.cumulated_steps >= self.max_steps:
             rospy.loginfo("Episode done: Maximum steps reached")
             return True
         
@@ -1060,6 +1066,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
 gym.envs.registration.register(
     id='MyGurdyWalkEnv-v0',
     entry_point='env:MyGurdyWalkEnv',
-    max_episode_steps=200,
+    # No gym TimeLimit: the env ends episodes itself after /gurdy/nsteps steps
+    max_episode_steps=None,
     reward_threshold=100.0,
 )

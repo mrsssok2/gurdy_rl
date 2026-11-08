@@ -1,10 +1,14 @@
 <?xml version="1.0"?>
 <launch>
+    <!-- smoke_test:=true runs smoke_test_episodes (5) episodes only; false leaves the yaml value -->
+    <arg name="smoke_test" default="false" />
+
     <!-- Start the position controllers first -->
     <include file="$(find my_gurdy_description)/launch/start_controllers.launch" />
     
     <!-- Load the parameters for the Q-learning algorithm -->
     <rosparam command="load" file="$(find my_gurdy_description)/config/params.yaml" />
+    <param if="$(arg smoke_test)" name="/gurdy/smoke_test" value="true" />
     
     <!-- Launch the training node -->
     <node pkg="my_gurdy_description" type="start_training.py" name="gurdy_qlearn" output="screen"/>

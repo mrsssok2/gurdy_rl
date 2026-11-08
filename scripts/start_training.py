@@ -15,6 +15,7 @@ matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plotting
 # Make sure environment is registered
 import env
 from output_paths import get_outdir
+from training_params import get_nepisodes
 
 # Set up the live plot
 plt.ion()  # Turn on interactive mode
@@ -300,8 +301,8 @@ def main():
     epsilon_discount = rospy.get_param("/gurdy/epsilon_discount", 0.995)
     
     # Number of episodes and steps
-    nepisodes = rospy.get_param("/gurdy/nepisodes", 1000)
-    nsteps = rospy.get_param("/gurdy/nsteps", 200)
+    nepisodes = get_nepisodes(1000)
+    nsteps = rospy.get_param("/gurdy/nsteps", 300)
     
     # Create Q-learning agent
     qlearn_agent = QLearn(

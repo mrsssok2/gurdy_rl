@@ -5,7 +5,7 @@ gurdy:
     # Time related parameters
     running_step: 0.1  # Duration of each simulation step (seconds)
     wait_time: 0.1     # Wait time between actions (seconds)
-    max_episode_steps: 101  # Maximum number of steps per episode
+    max_episode_steps: 300  # Unused; the step limit is nsteps below
     
     # Initial pose parameters
     init_joint_pose:
@@ -44,7 +44,9 @@ gurdy:
   epsilon_discount: 0.995  # Exploration rate decay
   min_epsilon: 0.05    # Minimum exploration rate
   nepisodes: 101   # Number of episodes
-  nsteps: 200          # Maximum steps per episode
+  nsteps: 300          # Maximum steps per episode (0.3 s of sim time each, 90 s in all)
+  smoke_test: false    # true: run smoke_test_episodes only, to check the setup (or smoke_test:=true on the launch file)
+  smoke_test_episodes: 5
     
   # State discretization parameters
   joint_states:
