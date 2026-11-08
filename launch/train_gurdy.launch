@@ -3,10 +3,6 @@
     <!-- Start the position controllers first -->
     <include file="$(find my_gurdy_description)/launch/start_controllers.launch" />
     
-    <!-- Wait for controllers to start properly -->
-    <arg name="startup_delay" default="2.0" /> <!-- seconds -->
-    <node pkg="rospy" type="sleep" name="sleep" args="$(arg startup_delay)" />
-    
     <!-- Load the parameters for the Q-learning algorithm -->
     <rosparam command="load" file="$(find my_gurdy_description)/config/params.yaml" />
     

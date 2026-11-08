@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Resolve training output directories relative to the my_gurdy_description
 package, wherever the workspace lives.
