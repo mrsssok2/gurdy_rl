@@ -120,14 +120,15 @@ class PolicyGradient:
         
         # Custom gradient calculation
         with tf.GradientTape() as tape:
-            # Forward pass
-            logits = self.model(states)
-            
-            # Calculate cross-entropy loss
-            neg_log_prob = tf.reduce_sum(-tf.math.log(tf.reduce_sum(logits * action_one_hot, axis=1) + 1e-10))
-            
-            # Weight by discounted rewards
-            loss = neg_log_prob * tf.reduce_sum(discounted_rewards)
+            # Forward pass (the model ends in softmax, so these are probabilities)
+            action_probs = self.model(states)
+
+            # Per-step negative log-probability of the action taken, shape (T,)
+            neg_log_prob = -tf.math.log(tf.reduce_sum(action_probs * action_one_hot, axis=1) + 1e-10)
+
+            # REINFORCE: weight each step by its own return G_t, then sum
+            # (sum_t -log pi(a_t|s_t) * G_t, not sum(-log pi) * sum(G))
+            loss = tf.reduce_sum(neg_log_prob * tf.constant(discounted_rewards, dtype=tf.float32))
         
         # Get gradients and apply
         grads = tape.gradient(loss, self.model.trainable_variables)
