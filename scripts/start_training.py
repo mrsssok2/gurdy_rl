@@ -45,7 +45,7 @@ ax3.grid(True)
 plt.tight_layout()
 plt.show(block=False)
 
-def convert_obs_to_state(observations):
+def convert_obs_to_state(observations, reference_height):
     """
     Converts observations to a state representation for Q-learning
     with improved discretization for better learning
@@ -53,6 +53,8 @@ def convert_obs_to_state(observations):
     Args:
         observations (np.array): Array of observations 
                                 [joint_angles (6), forward_velocity, forward_distance, head_height]
+        reference_height (float): Settled head height after the last reset;
+                                  height buckets are relative to it
     
     Returns:
         str: State string representation
@@ -109,14 +111,16 @@ def convert_obs_to_state(observations):
     else:
         dist_str = "FAR"
     
-    # Discretize head height (stability)
-    if head_height < 0.05:  # Very low - about to fall or fallen
+    # Discretize head height (stability) relative to the post-reset height,
+    # since the absolute standing height depends on how the robot settles
+    height_ratio = head_height / max(0.01, reference_height)
+    if height_ratio < 0.5:  # Below the env's fall threshold - fallen
         height_str = "FALLEN"
-    elif head_height < 0.1:  # Low - unstable
+    elif height_ratio < 0.75:  # Low - unstable
         height_str = "UNSTABLE"
-    elif head_height < 0.15:  # Medium - somewhat stable
+    elif height_ratio < 0.9:  # Medium - somewhat stable
         height_str = "MEDIUM"
-    else:  # High - stable
+    else:  # Near standing height - stable
         height_str = "STABLE"
     
     # Combine discretized values into a state string
@@ -349,7 +353,7 @@ def main():
         qlearn_agent.epsilon = epsilon
         
         # Get initial state
-        state = convert_obs_to_state(observation)
+        state = convert_obs_to_state(observation, env.unwrapped.initial_height)
         
         # Episode loop
         for step in range(nsteps):
@@ -360,7 +364,7 @@ def main():
             new_observation, reward, done, info = env.step(action)
             
             # Get new state
-            new_state = convert_obs_to_state(new_observation)
+            new_state = convert_obs_to_state(new_observation, env.unwrapped.initial_height)
             
             # Learn
             # Don't bootstrap from new_state when the episode has ended
