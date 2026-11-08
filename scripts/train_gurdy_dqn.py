@@ -4,6 +4,8 @@ import rospy
 import numpy as np
 import time
 import os
+import json
+import rospkg
 import matplotlib.pyplot as plt
 from dqn import DQN
 from gym import wrappers
@@ -160,42 +162,60 @@ def convert_obs_to_state(observations):
     
     return state_str
 
+def training_state_path(model_path):
+    """
+    Path of the training state file saved next to a model:
+    gurdy_dqn_model_<episode> -> gurdy_dqn_model_<episode>_state.json
+    """
+    return os.path.normpath(model_path) + "_state.json"
+
 def save_model(dqn_object, episode, outdir):
     """
-    Save the DQN model to a file
-    
+    Save the DQN model, plus the training state needed to resume from it
+    (last finished episode and epsilon), to the output directory
+
     Args:
         dqn_object (DQN): DQN learning object
-        episode (int): Current episode number
+        episode (int): Episode just finished
         outdir (str): Output directory
     """
     # Ensure directory exists
     if not os.path.exists(outdir):
         os.makedirs(outdir)
-    
+
     # Save model
     filename = os.path.join(outdir, f"gurdy_dqn_model_{episode}")
     dqn_object.save(filename)
 
+    # Save training state, for resuming with load_model_path
+    with open(training_state_path(filename), "w") as f:
+        json.dump({"episode": episode, "epsilon": float(dqn_object.epsilon)}, f, indent=2)
+
 def load_model(dqn_object, model_path):
     """
-    Load a DQN model from a file
-    
+    Load a DQN model and, when there is one, its training state
+
     Args:
         dqn_object (DQN): DQN learning object
-        model_path (str): Path to the model file
-    
+        model_path (str): Path to the saved model
+
     Returns:
-        DQN: Updated DQN learning object
+        int: Episode to start from: the one after the saved episode, or 0
+             if the model has no training state file
     """
-    # Check if file exists
-    if not os.path.exists(model_path):
-        print("Model file does not exist:", model_path)
-        return dqn_object
-    
-    # Load model
     dqn_object.load(model_path)
-    return dqn_object
+
+    state_path = training_state_path(model_path)
+    if not os.path.exists(state_path):
+        rospy.logwarn("No training state file %s: starting at episode 0 with epsilon %.3f",
+                      state_path, dqn_object.epsilon)
+        return 0
+    with open(state_path) as f:
+        training_state = json.load(f)
+    dqn_object.epsilon = training_state["epsilon"]
+    start_episode = training_state["episode"] + 1
+    rospy.loginfo("Resuming at episode %d with epsilon %.3f", start_episode, dqn_object.epsilon)
+    return start_episode
 
 def update_live_plot(episode_rewards, avg_rewards, losses, heights, fall_episodes):
     """
@@ -319,17 +339,17 @@ def main():
     env = gym.make('MyGurdyWalkEnv-v0')
     
     # Set initial learning parameters
-    epsilon = rospy.get_param("/gurdy/epsilon", 0.9)
+    epsilon = rospy.get_param("/gurdy/epsilon", 1.0)
     epsilon_min = rospy.get_param("/gurdy/min_epsilon", 0.05)
-    epsilon_decay = rospy.get_param("/gurdy/epsilon_discount", 0.995)
+    epsilon_decay = rospy.get_param("/gurdy/epsilon_discount", 0.99)  # Per episode
     gamma = rospy.get_param("/gurdy/gamma", 0.99)
     learning_rate = rospy.get_param("/gurdy/learning_rate", 0.001)
     batch_size = rospy.get_param("/gurdy/batch_size", 32)
     
     # Number of episodes and steps
-    nepisodes = get_nepisodes(101)
+    nepisodes = get_nepisodes(500)
     nsteps = rospy.get_param("/gurdy/nsteps", 400)
-    save_model_freq = rospy.get_param("/gurdy/save_model_freq", 100)
+    save_model_freq = rospy.get_param("/gurdy/save_model_freq", 25)
     
     # Set state and action sizes
     # Using observation directly: 6 leg pose codes + speed + distance + height = 9 features
@@ -348,11 +368,21 @@ def main():
         batch_size=batch_size
     )
     
-    # Optional: Load a previously trained model
+    # Optional: resume from a saved model (and its epsilon and episode)
+    start_episode = 0
     model_path = rospy.get_param("/gurdy/load_model_path", "")
-    if model_path and os.path.exists(model_path):
-        dqn_agent = load_model(dqn_agent, model_path)
-    
+    if model_path:
+        if not os.path.isabs(model_path):
+            model_path = os.path.join(rospkg.RosPack().get_path('my_gurdy_description'), model_path)
+        if not os.path.exists(model_path):
+            rospy.logerr("load_model_path does not exist: %s", model_path)
+            return
+        start_episode = load_model(dqn_agent, model_path)
+        if start_episode >= nepisodes:
+            rospy.logwarn("Saved model already finished episode %d of nepisodes %d: nothing to do",
+                          start_episode - 1, nepisodes)
+            return
+
     # Initialize statistics
     episode_rewards = []
     avg_rewards = []
@@ -364,7 +394,7 @@ def main():
     highest_reward = -float('inf')
     
     # Training loop
-    for episode in range(nepisodes):
+    for episode in range(start_episode, nepisodes):
         # Reset environment
         observation = env.reset()
         cumulated_reward = 0
@@ -413,7 +443,9 @@ def main():
         
         # Record if robot fell
         if fell_this_episode:
-            fall_episodes.append(episode)
+            # Index into this run's lists (the plots), which start at
+            # start_episode on a resumed run
+            fall_episodes.append(episode - start_episode)
             rospy.logwarn(f"Episode {episode}: Robot fell!")
         
         # Update target model every few episodes
@@ -448,13 +480,19 @@ def main():
                         f"Epsilon: {dqn_agent.epsilon:.3f} | "
                         f"Time: {elapsed_time:.1f}s | "
                         f"Head Height: {final_height:.3f}")
-        
-        # Save model periodically
+
+        # Decay exploration once per episode (1.0 -> 0.05 in about 300
+        # episodes with epsilon_discount 0.99)
+        dqn_agent.decay_epsilon()
+
+        # Save model periodically, with the decayed epsilon the next
+        # episode will use, so a resumed run picks up exactly here
         if episode % save_model_freq == 0 and episode > 0:
             save_model(dqn_agent, episode, outdir)
-    
-    # Save final model
-    save_model(dqn_agent, nepisodes-1, outdir)
+
+    # Save final model (unless the last episode was just saved)
+    if (nepisodes - 1) % save_model_freq != 0:
+        save_model(dqn_agent, nepisodes-1, outdir)
     
     # Plot final learning curve
     plot_learning_curve(episode_rewards, avg_rewards, losses, head_heights, fall_episodes, outdir)

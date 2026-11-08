@@ -37,14 +37,14 @@ gurdy:
     joint_increment: 0.1   # Joint position increment per step
     
   # DQN parameters
-  epsilon: 0.9         # Initial exploration rate
-  epsilon_discount: 0.995  # Exploration rate decay
+  epsilon: 1.0         # Initial exploration rate (a resumed run uses the saved epsilon instead)
+  epsilon_discount: 0.99   # Exploration rate decay, once per episode: 1.0 -> 0.05 in about 300 episodes
   min_epsilon: 0.05    # Minimum exploration rate
   gamma: 0.99          # Discount factor (looks ~100 steps ahead, several gait cycles)
   learning_rate: 0.001  # Learning rate for optimizer
   batch_size: 32       # Batch size for training
   memory_size: 10000   # Size of replay memory
-  nepisodes: 101   # Number of episodes
+  nepisodes: 500   # Total number of episodes (a resumed run continues up to this)
   nsteps: 400          # Maximum steps per episode (0.3 s of sim time each, 120 s in all)
   smoke_test: false    # true: run smoke_test_episodes only, to check the setup (or smoke_test:=true on the launch file)
   smoke_test_episodes: 5
@@ -61,10 +61,10 @@ gurdy:
     far: 5.0
       
   # Training output parameters
-  save_model_freq: 100   # Save model every N episodes
+  save_model_freq: 25    # Save model (and epsilon/episode for resuming) every N episodes
   log_freq: 1           # Log information every N episodes
   outdir: "output/dqn"  # Output directory for saved models, relative to the package (or an absolute path)
-  load_model_path: ""   # Path to load a pre-trained model (empty to train from scratch)
+  load_model_path: ""   # Saved model to resume from, e.g. output/dqn/gurdy_dqn_model_100 (relative to the package, or absolute; empty to train from scratch)
     
   # Robot physical parameters
   robot:

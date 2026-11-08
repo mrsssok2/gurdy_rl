@@ -17,7 +17,7 @@ class DQN:
         - action_size: Number of possible actions
         - epsilon: Exploration rate
         - epsilon_min: Minimum exploration rate
-        - epsilon_decay: Exploration rate decay
+        - epsilon_decay: Exploration rate decay, applied once per episode (decay_epsilon)
         - gamma: Discount factor
         - learning_rate: Learning rate for optimizer
         - batch_size: Batch size for training
@@ -139,10 +139,10 @@ class DQN:
             
         # Train the model
         self.model.fit(np.array(x), np.array(y), epochs=1, verbose=0)
-        
-        # Decay epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+
+    def decay_epsilon(self):
+        """Decay epsilon once; call this once per episode, not per training step"""
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
     def save(self, filepath):
         """Save the model to disk"""
