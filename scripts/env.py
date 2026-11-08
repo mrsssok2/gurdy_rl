@@ -687,11 +687,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     # standing still worth far more than walking)
     UPRIGHT_BONUS = 0.2
     # Episode ends once the robot has walked this far forward, in metres
-    TARGET_FORWARD_DISTANCE = 5.0
+    TARGET_FORWARD_DISTANCE = 0.5
     # The robot is "stuck" if it gains less than STUCK_MIN_PROGRESS metres of
     # forward progress over the last STUCK_WINDOW steps
-    STUCK_WINDOW = 10
-    STUCK_MIN_PROGRESS = 0.01
+    STUCK_WINDOW = 30
+    STUCK_MIN_PROGRESS = 0.005
 
     def __init__(self):
         """
