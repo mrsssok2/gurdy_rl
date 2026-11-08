@@ -174,12 +174,22 @@
         <material>Gazebo/Red</material>
     </gazebo>
 
-    <!-- Modified joint for left-side table viewing -->
+    <!-- Forward-looking camera for vision_node.py. head_link is fixed to
+         base_link with no rotation (joint "fixed" above), so head +x is the
+         walking direction (env FORWARD_SIGN = +1, world +x at spawn) and +y
+         is left. The camera sits on the front rim of the head (radius 0.05),
+         on the centre line, near the top of the head (which spans z 0..0.04),
+         and looks along +x. Gazebo cameras look along their link's +x, so a
+         positive pitch tilts the view down: camera_tilt_rad (12 deg) keeps
+         the ground from ~0.15 m out in the lower part of the image, since
+         the body is only ~9 cm high. vision_node.py uses the same tilt and
+         offset (its ~camera_tilt_deg and ~camera_x_m params) for its
+         distance estimate; change them together. -->
+    <xacro:property name="camera_tilt_rad" value="0.2094"/>
     <joint name="head_camera_joint" type="fixed">
         <parent link="head_link"/>
         <child link="camera_link"/>
-        <!-- Position adjusted for left-side mounting with table viewing angle -->
-        <origin xyz="0 -0.06 0.02" rpy="0 0 -2.0944"/>  <!-- -120 degrees to angle towards front-left -->
+        <origin xyz="0.055 0 0.035" rpy="0 ${camera_tilt_rad} 0"/>
     </joint>
 
     <gazebo reference="camera_link">
