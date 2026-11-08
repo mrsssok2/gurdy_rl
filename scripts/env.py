@@ -122,8 +122,8 @@ class MyGurdySingleLegEnv(gym.Env):
         
         # Add height of the robot head to observations
         self.observation_space = spaces.Box(
-            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 0.0, 0.0, 0.0]),  # min values for 6 joints, speed, distance, height
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 10.0, 1.0]),      # max values for 6 joints, speed, distance, height
+            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -2.0, -10.0, 0.0]),  # min values for 6 joints, forward velocity, forward distance, height
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 10.0, 1.0]),        # max values for 6 joints, forward velocity, forward distance, height
             dtype=np.float32
         )
         
@@ -395,7 +395,7 @@ class MyGurdySingleLegEnv(gym.Env):
         Get observation
         
         Returns:
-            np.array: [joint_angles, linear_speed, distance]
+            np.array: [joint_angles, forward_velocity, forward_distance, head_height]
         """
         raise NotImplementedError()
     
@@ -478,8 +478,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.action_space = spaces.Discrete(5)
         
         # Define observation space
-        # Joint positions (6), linear speed, distance, head height
-        low = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, 0.0, 0.0, 0.0])  
+        # Joint positions (6), signed forward (x) velocity, signed forward (x)
+        # distance from start, head height. Velocity and distance go negative
+        # when the robot moves backwards.
+        low = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -2.0, -10.0, 0.0])
         high = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 2.0, 10.0, 1.0])
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         
@@ -558,24 +560,24 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Define robot observations
         
         Returns:
-            np.array: [joint_angles, linear_speed, distance, head_height]
+            np.array: [joint_angles, forward_velocity, forward_distance, head_height]
         """
         # Get joint angles
         joint_angles = self.get_joint_angles()
         
-        # Get linear speed from odometry
-        linear_speed = self.get_linear_speed()
+        # Signed forward (x) velocity from odometry (negative = moving backwards)
+        forward_velocity = self.get_forward_velocity()
         
-        # Get distance from start point
-        distance = self.get_distance_from_start_point(self.start_point)
+        # Signed forward (x) displacement from the start point
+        forward_distance = self.get_forward_distance(self.start_point)
         
         # Get head height
         head_height = self.head_height
         
-        # Return observations: 6 joint positions + speed + distance + height
+        # Return observations: 6 joint positions + forward velocity + forward distance + height
         return np.array([joint_angles[0], joint_angles[1], joint_angles[2], 
                          joint_angles[3], joint_angles[4], joint_angles[5],
-                         linear_speed, distance, head_height])
+                         forward_velocity, forward_distance, head_height])
     
     def _is_done(self, observations, fallen):
         """
@@ -594,7 +596,6 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             return True
         
         # Forward (+x) progress from ground-truth odometry, matching the reward
-        # (the observation's speed and distance are direction-agnostic)
         current_x = self._odom.pose.pose.position.x
         self.x_history.append(current_x)
         forward_distance = current_x - self.start_point.x
@@ -640,8 +641,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             return -100.0
 
         # Forward progress along +x this step (signed: moving backwards is
-        # penalised). Uses ground-truth odometry rather than the abs speed and
-        # Euclidean distance in the observation, which reward any direction.
+        # penalised). Uses ground-truth odometry directly.
         current_x = self._odom.pose.pose.position.x
         delta_x = current_x - self.prev_x
         self.prev_x = current_x
@@ -691,34 +691,28 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         
         return angles
     
-    def get_linear_speed(self):
+    def get_forward_velocity(self):
         """
-        Retrieve linear speed from odometry
+        Retrieve signed forward (x) velocity from odometry
         
         Returns:
-            float: Linear speed of the robot
+            float: x velocity in the world frame (negative = moving backwards)
         """
         if self._odom:
-            return abs(self._odom.twist.twist.linear.x)
+            return self._odom.twist.twist.linear.x
         return 0.0
     
-    def get_distance_from_start_point(self, start_point):
+    def get_forward_distance(self, start_point):
         """
-        Calculate distance from the start point
+        Calculate signed forward (x) displacement from the start point
         
         Args:
             start_point (Point): The initial Point object
         
         Returns:
-            float: Distance moved from the start point
+            float: x displacement from the start (negative = behind the start)
         """
-        current_position = self._odom.pose.pose.position
-        dx = current_position.x - start_point.x
-        dy = current_position.y - start_point.y
-        
-        # Calculate Euclidean distance
-        distance = math.sqrt(dx*dx + dy*dy)
-        return distance
+        return self._odom.pose.pose.position.x - start_point.x
 
 # Register the environment
 gym.envs.registration.register(

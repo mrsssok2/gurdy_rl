@@ -51,7 +51,7 @@ def convert_obs_to_state(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [joint_angles (6), linear_speed, distance, head_height]
+                                [joint_angles (6), forward_velocity, forward_distance, head_height]
     
     Returns:
         str: State string representation
@@ -64,9 +64,9 @@ def convert_obs_to_state(observations):
     joint5_angle = observations[4]
     joint6_angle = observations[5]
     
-    # Extract speed, distance, and height
-    linear_speed = observations[6]
-    distance = observations[7]
+    # Extract signed forward velocity, signed forward distance, and height
+    linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
+    distance = observations[7]      # Forward (x) distance from start, negative = behind
     head_height = observations[8]
     
     # Discretize joint angles (simplified for state representation)
@@ -84,8 +84,10 @@ def convert_obs_to_state(observations):
     else:
         joint_pattern = "OTHER"     # Other pattern
     
-    # Discretize linear speed
-    if linear_speed < 0.05:
+    # Discretize signed forward velocity
+    if linear_speed < -0.05:
+        speed_str = "BACKWARD"  # Moving backwards
+    elif linear_speed < 0.05:
         speed_str = "STOP"
     elif linear_speed < 0.2:
         speed_str = "SLOW"
@@ -94,8 +96,10 @@ def convert_obs_to_state(observations):
     else:
         speed_str = "FAST"
     
-    # Discretize distance
-    if distance < 0.5:
+    # Discretize signed forward distance from start
+    if distance < -0.1:
+        dist_str = "BEHIND"     # Ended up behind the start point
+    elif distance < 0.5:
         dist_str = "CLOSE"
     elif distance < 1.5:
         dist_str = "NEAR"

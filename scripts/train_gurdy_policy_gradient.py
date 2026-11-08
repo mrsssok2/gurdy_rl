@@ -41,7 +41,7 @@ def extract_state_features(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [joint_angles (6), linear_speed, distance, head_height]
+                                [joint_angles (6), forward_velocity, forward_distance, head_height]
     
     Returns:
         np.array: Feature array for Policy Gradient
@@ -50,9 +50,9 @@ def extract_state_features(observations):
     # Extract joint positions
     joint_angles = observations[0:6]
     
-    # Extract speed, distance, and height
-    linear_speed = observations[6]
-    distance = observations[7]
+    # Extract signed forward velocity, signed forward distance, and height
+    linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
+    distance = observations[7]      # Forward (x) distance from start, negative = behind
     head_height = observations[8]
     
     # Normalize the values
