@@ -30,12 +30,13 @@
     <!-- Joint limits. Worst-case static torque, one leg holding the whole
          robot (7.07 N) at full 0.12 m reach: ~0.85 N*m (hip), ~0.42 N*m
          (knee, 0.06 m reach). With three feet down it is about a third of
-         that (~0.28 / ~0.14 N*m).
-         0.3 N*m was tried but saturated under p=5 and the legs sagged well
-         short of their targets. 1.0 N*m (~4.5x worst case) gives the stiffer
-         p=20 controllers room; the earlier blow-up at 1.0 N*m was traced to
-         integral windup and the 0.005 rad/s velocity limit, both since fixed
-         (i_clamp 0.1, velocity 5.0). -->
+         that (~0.28 / ~0.14 N*m), so 1.0 N*m is a ~3.5x margin at the
+         hip and still covers the whole robot on one leg. Under the p=10
+         controllers it saturates at ~0.1 rad of error. 0.3 N*m was tried
+         but saturated and the legs sagged short of their targets. The
+         earlier blow-up at 1.0 N*m was traced to integral windup and the
+         0.005 rad/s velocity limit, both since fixed (i_clamp 0.1,
+         velocity 5.0). -->
     <xacro:property name="joint_effort" value="1.0"/>
     <!-- rad/s. 0.005 rad/s would need ~5 min for a 1.5 rad stroke. -->
     <xacro:property name="joint_velocity" value="5.0"/>
