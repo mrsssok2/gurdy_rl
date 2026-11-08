@@ -895,9 +895,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         groups_moved = sum(observations[OBS_GROUP_FLAGS])
         energy_penalty = -0.05 * 2 * GAIT_OFFSET * groups_moved
 
-        # Penalty for episode ending with little forward progress
+        # Penalty for an episode that ends short of the goal
         terminal_penalty = 0
-        if done and forward_distance < 1.0:
+        if done and forward_distance < self.TARGET_FORWARD_DISTANCE:
             terminal_penalty = -1.0
 
         # Bonus for reaching the target by walking forward
