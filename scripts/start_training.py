@@ -59,8 +59,8 @@ def convert_obs_to_state(observations, reference_height):
     Returns:
         str: State string representation
     """
-    # Current target state of each leg group: NEUTRAL, EXTENDED or RETRACTED
-    # for FRONT, BACK and SIDE (see env.ACTIONS)
+    # Current foot pose of each leg group: GROUND_IN, GROUND_OUT, LIFT_IN or
+    # LIFT_OUT for FRONT, BACK and SIDE (see env.ACTIONS)
     front_state, back_state, side_state = env.group_states_from_obs(observations)
     
     # Extract signed forward velocity, signed forward distance, and height
@@ -68,8 +68,8 @@ def convert_obs_to_state(observations, reference_height):
     distance = observations[7]      # Forward (x) distance from start, negative = behind
     head_height = observations[8]
     
-    # The group states identify the robot's pose exactly, since each action
-    # sets one group's state
+    # The group poses identify the robot's pose exactly, since each action
+    # sets one group's pose
     joint_pattern = "F-%s_B-%s_S-%s" % (front_state, back_state, side_state)
     
     # Discretize signed forward velocity

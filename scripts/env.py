@@ -36,10 +36,10 @@ def euler_from_quaternion(quaternion):
     euler = q.yaw_pitch_roll
     return (euler[2], euler[1], euler[0])  # roll, pitch, yaw
 
-# Neutral stance used on reset and for the "stand still" action: a low
-# spider crouch with the knees up and out. With all joints at 0 the legs
-# point straight down and Gurdy balances on its leg tips, which is tall and
-# tips over easily.
+# Neutral pose: a low spider crouch with the knees up and out. It is the
+# reference the gait foot poses below are placed around; the env itself
+# resets to STAND_POSE. With all joints at 0 the legs point straight down and
+# Gurdy balances on its leg tips, which is tall and tips over easily.
 #
 # Joint directions, worked out from robot/gurdy.xacro (both axes are local y):
 #   - upper leg (limits -1.55..0): 0 points straight down; negative swings the
@@ -53,8 +53,8 @@ def euler_from_quaternion(quaternion):
 # off the limit at -1.50 and the knees at -2.25: the thigh is 86 deg out from
 # vertical (nearly horizontal) and the shin tilts 43 deg back inward, putting
 # the foot about 0.048 m below the hip and 0.019 m outside it (~0.044 m from
-# the body centre). The hips are at the bottom of their range, so gait
-# offsets must be positive (thigh swung back down toward vertical).
+# the body centre). The hips are near the bottom of their range, which limits
+# how far out the foot can reach at this height (see the foot poses below).
 # Try alternatives by hand with scripts/test_pose.py.
 # The angles, the limits and the leg IK live in leg_kinematics.py.
 NEUTRAL_UPPER_LEG = leg_kinematics.NEUTRAL_HIP
@@ -73,63 +73,125 @@ LOWER_LEG_LIMITS = leg_kinematics.KNEE_LIMITS
 #   FRONT (5, 2): spokes +-30 deg from +x
 #   BACK  (1, 4): spokes +-30 deg from -x
 #   SIDE  (3, 6): spokes along +-y, no x component
-# Each group is in one of three states, as (hip, knee) offsets from
-# NEUTRAL_POSE. Foot position below / outside the hip:
-#   NEUTRAL   ( 0.0, 0.0): 48 mm down, 19 mm out (the shortest leg)
-#   EXTENDED  (+0.4, +0.4): 71 mm down, 13 mm out. Longer leg, carries load.
-#   RETRACTED (+0.4,  0.0): 52 mm down, -1 mm out. Foot pulled in; 19 mm
-#                           higher than EXTENDED, only 4 mm lower than NEUTRAL.
-# A planted foot that moves in pulls the body toward it along its spoke; one
-# that moves out pushes the body away from it.
 GROUP_NAMES = ("FRONT", "BACK", "SIDE")
 GROUP_LEGS = {"FRONT": (5, 2), "BACK": (1, 4), "SIDE": (3, 6)}
-NEUTRAL, EXTENDED, RETRACTED = "NEUTRAL", "EXTENDED", "RETRACTED"
-GAIT_OFFSET = 0.4
-GROUP_STATE_OFFSETS = {
-    NEUTRAL: (0.0, 0.0),
-    EXTENDED: (GAIT_OFFSET, GAIT_OFFSET),
-    RETRACTED: (GAIT_OFFSET, 0.0),
+
+# Foot poses. Each group's feet are in one of four poses, each given as a
+# foot position (reach r along the spoke, height h relative to the hip; see
+# leg_kinematics.py) and turned into joint angles by IK. Every grounded pose
+# puts the foot at the same height, so all grounded feet share the load. The
+# lifted poses are LIFT_HEIGHT higher at the same reach.
+#
+# The ground is GROUND_DROP below the neutral foot, so the stance is 30 mm
+# taller than the neutral crouch. At the neutral height the hip is 0.05 rad
+# from its -1.55 limit, which leaves only ~3.5 mm of outward reach on the
+# ground and none once lifted. 30 mm lower, all four poses fit. The tightest
+# is LIFT_OUT, whose hip is at -1.506.
+#
+# A planted foot that moves in pulls the body toward it along its spoke; one
+# that moves out pushes the body away from it.
+GROUND_DROP = 0.030    # ground below the neutral foot, m
+REACH_STROKE = 0.015   # IN / OUT reach either side of the neutral foot, m
+LIFT_HEIGHT = 0.020    # lifted foot above the ground, m
+GROUND_HEIGHT = leg_kinematics.NEUTRAL_FOOT[1] - GROUND_DROP
+REACH_IN_R = leg_kinematics.NEUTRAL_FOOT[0] - REACH_STROKE
+REACH_OUT_R = leg_kinematics.NEUTRAL_FOOT[0] + REACH_STROKE
+
+GROUND_IN, GROUND_OUT, LIFT_IN, LIFT_OUT = "GROUND_IN", "GROUND_OUT", "LIFT_IN", "LIFT_OUT"
+FOOT_POSE_NAMES = (GROUND_IN, GROUND_OUT, LIFT_IN, LIFT_OUT)
+# (lifted, out) for each pose. The observation flags use the same pair.
+POSE_FLAGS = {
+    GROUND_IN: (False, False),
+    GROUND_OUT: (False, True),
+    LIFT_IN: (True, False),
+    LIFT_OUT: (True, True),
 }
-# (group, new state) per action index. Each action changes only its own
-# group's targets; the other groups keep theirs, so the agent builds up a
-# pose over several steps. STAND (group None) puts every group to NEUTRAL.
-ACTIONS = [
-    ("FRONT", EXTENDED),   # 0
-    ("FRONT", RETRACTED),  # 1
-    ("BACK", EXTENDED),    # 2
-    ("BACK", RETRACTED),   # 3
-    ("SIDE", EXTENDED),    # 4
-    ("SIDE", RETRACTED),   # 5
-    (None, NEUTRAL),       # 6 STAND
-]
+FLAGS_POSE = {flags: pose for pose, flags in POSE_FLAGS.items()}
+# Foot (r, h) of each pose, m
+FOOT_POSES = {
+    pose: (REACH_OUT_R if out else REACH_IN_R,
+           GROUND_HEIGHT + (LIFT_HEIGHT if lifted else 0.0))
+    for pose, (lifted, out) in POSE_FLAGS.items()
+}
+# (hip, knee) of each pose. leg_ik raises ValueError here, at import, if a
+# pose is out of reach or outside the joint limits.
+POSE_ANGLES = {pose: leg_kinematics.leg_ik(*foot) for pose, foot in FOOT_POSES.items()}
+
+# Pose every group takes on reset and on STAND: grounded with the feet out,
+# the widest support base
+STAND_STATE = GROUND_OUT
+STAND_POSE = ([POSE_ANGLES[STAND_STATE][0]] * 6 +
+              [POSE_ANGLES[STAND_STATE][1]] * 6)
+
+# Moves. Each changes one axis of a group's pose and keeps the other:
+#   LIFT      raise the feet, at their current reach
+#   LOWER     put them back on the ground, at their current reach
+#   REACH_IN  move them in, at their current height
+#   REACH_OUT move them out, at their current height
+# A move that is already satisfied (LIFT on lifted feet) changes nothing.
+LIFT, LOWER, REACH_IN, REACH_OUT, STAND = "LIFT", "LOWER", "REACH_IN", "REACH_OUT", "STAND"
+GROUP_MOVES = (LIFT, LOWER, REACH_IN, REACH_OUT)
+
+def apply_move(pose, move):
+    """Pose a group ends up in after `move`, starting from `pose`."""
+    lifted, out = POSE_FLAGS[pose]
+    if move == LIFT:
+        lifted = True
+    elif move == LOWER:
+        lifted = False
+    elif move == REACH_IN:
+        out = False
+    elif move == REACH_OUT:
+        out = True
+    else:
+        raise ValueError("unknown move %r" % (move,))
+    return FLAGS_POSE[(lifted, out)]
+
+# (group, move) per action index: the four moves for each group in
+# GROUP_NAMES order, then STAND (group None), which puts every group in
+# STAND_STATE. Every other action changes only its own group's pose; the
+# other groups keep theirs, so the agent builds up a pose over several steps.
+#    0- 3  FRONT LIFT, LOWER, REACH_IN, REACH_OUT
+#    4- 7  BACK  LIFT, LOWER, REACH_IN, REACH_OUT
+#    8-11  SIDE  LIFT, LOWER, REACH_IN, REACH_OUT
+#   12     STAND
+ACTIONS = [(group, move) for group in GROUP_NAMES for move in GROUP_MOVES]
+ACTIONS.append((None, STAND))
+
+def format_foot_poses():
+    """The foot poses and their IK joint angles, one line per pose."""
+    r0, h0 = leg_kinematics.NEUTRAL_FOOT
+    lines = ["Foot poses (relative to the hip; neutral foot r %+.1f mm, h %+.1f mm, "
+             "hip %+.3f, knee %+.3f):" % (1000 * r0, 1000 * h0,
+                                         NEUTRAL_UPPER_LEG, NEUTRAL_LOWER_LEG)]
+    for pose in FOOT_POSE_NAMES:
+        r, h = FOOT_POSES[pose]
+        hip, knee = POSE_ANGLES[pose]
+        lines.append("  %-10s r %+5.1f mm  h %+5.1f mm  ->  hip %+.3f  knee %+.3f rad%s"
+                     % (pose, 1000 * r, 1000 * h, hip, knee,
+                        "  (reset / STAND)" if pose == STAND_STATE else ""))
+    return "\n".join(lines)
 
 # Observation layout (length 9). The first six entries encode each group's
-# current target state as two 0/1 flags, (extended, retracted); both 0 means
-# NEUTRAL. Flags rather than one ordinal code, since the three states differ
-# along two axes (foot height and reach).
+# current target pose as two 0/1 flags, (lifted, out), in GROUP_NAMES order.
 OBS_GROUP_FLAGS = slice(0, 6)
 OBS_FORWARD_VELOCITY = 6
 OBS_FORWARD_DISTANCE = 7
 OBS_HEAD_HEIGHT = 8
 
 def group_state_flags(group_states):
-    """Encode {group: state} as the 6 observation flags, in GROUP_NAMES order."""
+    """Encode {group: pose} as the 6 observation flags, in GROUP_NAMES order."""
     flags = []
     for name in GROUP_NAMES:
-        state = group_states[name]
-        flags += [1.0 if state == EXTENDED else 0.0,
-                  1.0 if state == RETRACTED else 0.0]
+        lifted, out = POSE_FLAGS[group_states[name]]
+        flags += [1.0 if lifted else 0.0, 1.0 if out else 0.0]
     return flags
 
 def group_states_from_obs(observations):
-    """Decode the observation flags back to a state name per group, in GROUP_NAMES order."""
+    """Decode the observation flags back to a pose name per group, in GROUP_NAMES order."""
     flags = observations[OBS_GROUP_FLAGS]
-    states = []
-    for i in range(len(GROUP_NAMES)):
-        extended, retracted = flags[2 * i], flags[2 * i + 1]
-        states.append(EXTENDED if extended > 0.5 else
-                      RETRACTED if retracted > 0.5 else NEUTRAL)
-    return states
+    return [FLAGS_POSE[(flags[2 * i] > 0.5, flags[2 * i + 1] > 0.5)]
+            for i in range(len(GROUP_NAMES))]
 
 class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
@@ -220,8 +282,8 @@ class MyGurdySingleLegEnv(gym.Env):
         self.publishers_array.append(self._joint_pubisher5)
         self.publishers_array.append(self._joint_pubisher6)
 
-        # All 12 actuated joints (6 upper + 6 lower legs). Actions only drive
-        # the upper legs, but every joint is set to NEUTRAL_POSE on reset.
+        # All 12 actuated joints (6 upper + 6 lower legs). Actions drive all
+        # of them, and every joint is set to STAND_POSE on reset.
         self.all_joint_names = (
             ["head_upperlegM%d_joint" % i for i in range(1, 7)] +
             ["upperlegM%d_lowerlegM%d_joint" % (i, i) for i in range(1, 7)]
@@ -414,7 +476,7 @@ class MyGurdySingleLegEnv(gym.Env):
         Returns:
             list: Initial observation
         """
-        # Put the robot back at its spawn pose in NEUTRAL_POSE, and wait for
+        # Put the robot back at its spawn pose in STAND_POSE, and wait for
         # it to settle
         self._set_init_pose()
 
@@ -478,7 +540,7 @@ class MyGurdySingleLegEnv(gym.Env):
     
     def _set_init_pose(self):
         """
-        Reset the robot into NEUTRAL_POSE and wait until it is level and still.
+        Reset the robot into STAND_POSE and wait until it is level and still.
         If it hasn't stabilised within STABLE_TIMEOUT s, redo the reset, up to
         RESET_MAX_TRIES times. Each attempt is logged.
         """
@@ -504,16 +566,16 @@ class MyGurdySingleLegEnv(gym.Env):
     def _reset_pose_once(self):
         """
         Put the robot back at its spawn x, y and orientation, already in
-        NEUTRAL_POSE and just above the ground (see reset_pose.py).
+        STAND_POSE and just above the ground (see reset_pose.py).
 
-        With physics paused, set all 12 joints to NEUTRAL_POSE, place the
+        With physics paused, set all 12 joints to STAND_POSE, place the
         base 2 cm above its standing height, and point every position
-        controller at NEUTRAL_POSE, then unpause and let it settle.
+        controller at STAND_POSE, then unpause and let it settle.
         """
         # Without move_all_joints the controllers would drive the joints
         # straight back to their previous targets once physics resumes
-        reset_to_pose(self.all_joint_names, NEUTRAL_POSE,
-                      before_unpause=lambda: self.move_all_joints(NEUTRAL_POSE))
+        reset_to_pose(self.all_joint_names, STAND_POSE,
+                      before_unpause=lambda: self.move_all_joints(STAND_POSE))
 
     def get_roll_pitch(self):
         """
@@ -705,7 +767,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.action_space = spaces.Discrete(len(ACTIONS))
         
         # Define observation space
-        # Group target-state flags (6, see OBS_GROUP_FLAGS), signed forward
+        # Group foot-pose flags (6, see OBS_GROUP_FLAGS), signed forward
         # velocity, signed forward distance from start, head height. Velocity
         # and distance go negative when the robot moves backwards.
         low = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, -10.0, 0.0])
@@ -714,8 +776,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         
         # Initialize state variables
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        # Current target state of each leg group (see ACTIONS)
-        self.group_states = dict.fromkeys(GROUP_NAMES, NEUTRAL)
+        # Current target foot pose of each leg group (see ACTIONS)
+        self.group_states = dict.fromkeys(GROUP_NAMES, STAND_STATE)
+        rospy.loginfo(format_foot_poses())
         self.distance_moved = 0.0
         self.initial_height = 0.0  # Initial height of the robot
         
@@ -732,9 +795,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     
     def _init_env_variables(self):
         """Initializes variables at the start of each episode"""
-        # Reset state variables. The reset leaves every joint at NEUTRAL_POSE.
+        # Reset state variables. The reset leaves every joint at STAND_POSE,
+        # i.e. every group in STAND_STATE.
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        self.group_states = dict.fromkeys(GROUP_NAMES, NEUTRAL)
+        self.group_states = dict.fromkeys(GROUP_NAMES, STAND_STATE)
         self.distance_moved = 0.0
         self._has_fallen = False
         
@@ -758,36 +822,28 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Args:
             action (int): Action index to execute
         """
-        # Update the target state of the action's group (all groups for
-        # STAND); the other groups keep their current targets
-        group, state = ACTIONS[action]
-        for name in (GROUP_NAMES if group is None else (group,)):
-            self.group_states[name] = state
+        # Update the pose of the action's group (all groups to STAND_STATE for
+        # STAND); the other groups keep their current poses
+        group, move = ACTIONS[action]
+        if group is None:
+            self.group_states = dict.fromkeys(GROUP_NAMES, STAND_STATE)
+        else:
+            self.group_states[group] = apply_move(self.group_states[group], move)
 
-        # Offsets from NEUTRAL_POSE for all 12 joints, upper legs M1-M6 then
-        # lower legs M1-M6
-        upper_offsets = [0.0] * 6
-        lower_offsets = [0.0] * 6
+        # Joint targets for all 12 joints, upper legs M1-M6 then lower legs
+        # M1-M6. POSE_ANGLES come from IK and are inside the joint limits.
+        hips = [0.0] * 6
+        knees = [0.0] * 6
         for name, legs in GROUP_LEGS.items():
-            hip, knee = GROUP_STATE_OFFSETS[self.group_states[name]]
+            hip, knee = POSE_ANGLES[self.group_states[name]]
             for leg in legs:
-                upper_offsets[leg - 1] = hip
-                lower_offsets[leg - 1] = knee
-
-        targets = [neutral + offset for neutral, offset in
-                   zip(NEUTRAL_POSE, upper_offsets + lower_offsets)]
-        limits = [UPPER_LEG_LIMITS] * 6 + [LOWER_LEG_LIMITS] * 6
-        new_joints = []
-        for name, target, (lower, upper) in zip(self.all_joint_names, targets, limits):
-            clipped = min(upper, max(lower, target))
-            if clipped != target:
-                rospy.logwarn("Action %d: %s target %.3f clipped to %.3f"
-                              % (action, name, target, clipped))
-            new_joints.append(clipped)
+                hips[leg - 1] = hip
+                knees[leg - 1] = knee
 
         # Execute joint movement
-        self.move_all_joints(new_joints)
-        self.joint_positions = upper_offsets
+        self.move_all_joints(hips + knees)
+        # Hip offsets from STAND_POSE
+        self.joint_positions = [hip - stand for hip, stand in zip(hips, STAND_POSE[:6])]
         
         # Wait for the robot to execute the movement
         time.sleep(0.1)
@@ -891,11 +947,13 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         height_ratio = head_height / max(0.01, self.initial_height)  # Avoid division by zero
         stability_reward = self.UPRIGHT_BONUS * min(1.0, height_ratio)  # Cap at 1.0
 
-        # Penalty for moving the legs away from neutral (energy efficiency):
-        # 0.05 per radian of hip offset, as before, i.e. two hips at
-        # GAIT_OFFSET for each group that is not NEUTRAL
-        groups_moved = sum(observations[OBS_GROUP_FLAGS])
-        energy_penalty = -0.05 * 2 * GAIT_OFFSET * groups_moved
+        # Penalty for holding the legs away from the stand pose (energy
+        # efficiency): 0.05 per radian of hip offset from STAND_POSE, as
+        # before, summed over both hips of each group
+        stand_hip = POSE_ANGLES[STAND_STATE][0]
+        hip_offset = sum(2 * abs(POSE_ANGLES[pose][0] - stand_hip)
+                         for pose in group_states_from_obs(observations))
+        energy_penalty = -0.05 * hip_offset
 
         # Penalty for an episode that ends short of the goal
         terminal_penalty = 0
