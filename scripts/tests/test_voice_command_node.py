@@ -73,6 +73,7 @@ LEGS = (1, 2, 3, 4, 5, 6)
 MOVES = ("LIFT", "LOWER", "REACH_IN", "REACH_OUT")
 ACTIONS = [(leg, move) for leg in LEGS for move in MOVES] + [(None, "STAND")]
 PARAMS = {}
+SIM_TIME = [100.0]
 PUBLISHED = []
 SUBSCRIBERS = {}
 
@@ -82,8 +83,10 @@ def install_stubs():
     rospy.init_node = lambda *a, **k: None
     rospy.get_param = lambda name, default=None: PARAMS.get(name, default)
     rospy.is_shutdown = lambda: False
-    for level in ("loginfo", "logwarn", "logerr"):
+    for level in ("loginfo", "logwarn", "logerr", "logwarn_throttle"):
         setattr(rospy, level, lambda *a, **k: None)
+    rospy.Time = types.SimpleNamespace(
+        now=lambda: types.SimpleNamespace(to_sec=lambda: SIM_TIME[0]))
 
     class Publisher(object):
         def __init__(self, topic, *a, **k):
@@ -361,6 +364,137 @@ class NodeTest(unittest.TestCase):
         self.assertFalse(self.node.busy)
         # A lifted leg was put back down after the stop
         self.assertTrue(all(s == "GROUND_OUT" for s in self.walk.leg_states.values()))
+
+
+class VisionCommandTest(unittest.TestCase):
+    """describe and go_to_object, with detections fed by hand."""
+
+    def setUp(self):
+        PARAMS.clear()
+        del PUBLISHED[:]
+        SUBSCRIBERS.clear()
+        SIM_TIME[0] = 100.0
+        self.node = node_mod.VoiceCommandNode()
+        self.walk = self.node.walk
+
+    def send(self, **cmd):
+        SUBSCRIBERS[node_mod.COMMAND_TOPIC](types.SimpleNamespace(data=json.dumps(cmd)))
+
+    def detections(self, objects, stamp=None):
+        msg = {"stamp": SIM_TIME[0] if stamp is None else stamp, "objects": objects}
+        SUBSCRIBERS[node_mod.DETECTIONS_TOPIC](types.SimpleNamespace(data=json.dumps(msg)))
+
+    def feedback(self):
+        return [json.loads(d) for t, d in PUBLISHED if t == node_mod.FEEDBACK_TOPIC]
+
+    BALL = {"color": "red", "shape": "ball", "side": "center", "bearing_deg": 2.0,
+            "distance_m": 0.3, "area_fraction": 0.014, "centroid": [380, 350],
+            "bbox": [330, 300, 95, 95], "clipped": False}
+
+    def test_describe(self):
+        self.detections([self.BALL])
+        self.send(action="describe", id="d1")
+        [fb] = self.feedback()
+        self.assertEqual((fb["action"], fb["id"], fb["status"]), ("describe", "d1", "ok"))
+        self.assertEqual(fb["objects"], [{k: self.BALL[k] for k in (
+            "color", "shape", "side", "bearing_deg", "distance_m", "area_fraction")}])
+
+    def test_describe_nothing_in_view(self):
+        self.detections([])
+        self.send(action="describe")
+        self.assertEqual((self.feedback()[-1]["status"], self.feedback()[-1]["objects"]),
+                         ("ok", []))
+
+    def test_describe_without_camera(self):
+        old = node_mod.DESCRIBE_TIMEOUT_S
+        node_mod.DESCRIBE_TIMEOUT_S = 0.05
+        try:
+            self.send(action="describe", id="d")
+            self.assertEqual(self.feedback()[-1]["status"], "no_camera")
+            # A stale frame (over 1 s old in sim time) doesn't count
+            self.detections([self.BALL], stamp=SIM_TIME[0] - 5.0)
+            self.send(action="describe", id="d")
+            self.assertEqual(self.feedback()[-1]["status"], "no_camera")
+        finally:
+            node_mod.DESCRIBE_TIMEOUT_S = old
+
+    def test_look_waits_for_a_new_frame(self):
+        self.detections([self.BALL], stamp=99.0)
+        self.assertIsNone(self.node.look(100.0, timeout=0.05))
+        feeder = threading.Timer(0.05, lambda: self.detections([], stamp=100.2))
+        feeder.start()
+        frame = self.node.look(100.0, timeout=2.0)
+        feeder.join()
+        self.assertEqual(frame["stamp"], 100.2)
+
+    def test_go_to_object_reached(self):
+        """The ball straight ahead grows as the fake walk moves forward."""
+        def look(after, timeout=None):
+            d = 0.35 - self.walk.x
+            return {"stamp": after, "objects": [dict(self.BALL, bearing_deg=0.0, distance_m=d,
+                                                     area_fraction=0.0013 / d ** 2)]}
+        self.node.look = look
+        self.send(action="go_to_object", color="red", shape="ball", id="g1")
+        self.assertTrue(self.node.busy)
+        self.node.execute_approach(self.node.commands.get_nowait())
+        [fb] = self.feedback()
+        self.assertEqual((fb["action"], fb["id"], fb["status"]), ("go_to_object", "g1", "reached"))
+        self.assertEqual((fb["color"], fb["shape"]), ("red", "ball"))
+        self.assertGreater(fb["forward_m"], 0.1)
+        self.assertGreaterEqual(fb["target"]["area_fraction"], 0.04)
+        self.assertIn("reached", fb["message"])
+        self.assertFalse(self.node.busy)
+        self.assertEqual(self.node.last_result["action"], "go_to_object")
+        self.assertAlmostEqual(fb["total_distance_m"], fb["distance_m"])
+        self.assertTrue(all(s == "GROUND_OUT" for s in self.walk.leg_states.values()))
+
+    def test_go_to_object_not_found(self):
+        self.node.look = lambda after, timeout=None: {"stamp": after, "objects": [self.BALL]}
+        self.send(action="go_to_object", color="blue", id="g2")
+        self.node.execute_approach(self.node.commands.get_nowait())
+        fb = self.feedback()[-1]
+        self.assertEqual((fb["status"], fb["color"], fb["shape"], fb["steps"]),
+                         ("not_found", "blue", None, 0))
+
+    def test_go_to_object_fall_resets(self):
+        self.walk.fall_at = 3
+        self.node.look = lambda after, timeout=None: {"stamp": after, "objects": [self.BALL]}
+        self.send(action="go_to_object", color="red")
+        self.node.execute_approach(self.node.commands.get_nowait())
+        fb = self.feedback()[-1]
+        self.assertEqual(fb["status"], "fallen")
+        self.assertTrue(fb["reset"])
+        self.assertEqual(self.walk.resets, 2)
+
+    def test_stop_during_approach(self):
+        self.walk.step_delay = 0.005
+        self.node.look = lambda after, timeout=None: {"stamp": after, "objects": [
+            dict(self.BALL, bearing_deg=0.0, area_fraction=0.001)]}
+        worker = threading.Thread(target=self.node.spin)
+        worker.daemon = True
+        worker.start()
+        self.send(action="go_to_object", color="red", shape="ball", id="go")
+        time.sleep(0.1)
+        self.send(action="walk_forward", distance_m=0.1, id="second")
+        self.send(action="status", id="st")
+        self.send(action="describe", id="d")
+        self.send(action="stop", id="halt")
+        deadline = time.time() + 5
+        while time.time() < deadline and not any(
+                f.get("id") == "go" for f in self.feedback()):
+            time.sleep(0.01)
+        by_id = {f.get("id"): f for f in self.feedback()}
+        self.assertEqual(by_id["second"]["status"], "busy")
+        self.assertEqual(by_id["st"]["walking"]["action"], "go_to_object")
+        self.assertEqual((by_id["go"]["status"], by_id["go"]["stopped_by"]), ("stopped", "halt"))
+        self.assertTrue(all(s == "GROUND_OUT" for s in self.walk.leg_states.values()))
+
+    def test_bad_go_to_object(self):
+        self.send(action="go_to_object", id="b1")
+        self.send(action="go_to_object", color="pink", id="b2")
+        self.send(action="go_to_object", color="red", shape="cone", id="b3")
+        self.assertEqual([f["status"] for f in self.feedback()], ["error"] * 3)
+        self.assertFalse(self.node.busy)
 
 
 class FeatureTest(unittest.TestCase):

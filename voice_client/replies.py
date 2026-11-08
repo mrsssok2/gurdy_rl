@@ -27,6 +27,19 @@ MODE_NAMES = {"rl": "RL mode", "scripted": "normal mode"}
 DIRECTION_NAMES = {"walk_backward": "peeche", "walk_left": "baayen", "walk_right": "daayen"}
 WALK_ACTIONS = ("walk_forward",) + tuple(DIRECTION_NAMES)
 
+# Camera replies. Gend (ball) and cheez (thing) are feminine, dabba (box)
+# masculine; laal doesn't change, neela/neeli and hara/hari do. Before a
+# postposition (ke paas, ki taraf, tak) the masculine forms are oblique:
+# "neele dabbe ke paas". Keys: gender, or "o" for masculine oblique.
+OBJECT_NAMES = {"ball": ("gend", "f"), "box": ("dabba", "m"), None: ("cheez", "f")}
+OBLIQUE_NOUNS = {"dabba": "dabbe"}
+COLOR_NAMES = {"red": {"m": "laal", "f": "laal", "o": "laal"},
+               "blue": {"m": "neela", "f": "neeli", "o": "neele"},
+               "green": {"m": "hara", "f": "hari", "o": "hare"}}
+SIDE_NAMES = {"center": "saamne", "left": "baayen taraf", "right": "daayen taraf"}
+SIDE_ORDER = ("center", "left", "right")
+NO_CAMERA_REPLY = "Mujhe camera se tasveer nahi mil rahi. Kya vision node chal raha hai?"
+
 
 def number_words(n):
     """Romanized Hindi for an integer 0..100; digits beyond that."""
@@ -118,6 +131,86 @@ def _walk_reply(feedback, parsed):
     return " ".join(parts)
 
 
+def object_phrase(color, shape, oblique=False):
+    """
+    ("neela dabba", "m") for ("blue", "box"), ("neele dabbe", "m") with
+    oblique (before ke paas / ki taraf / tak); shape None is "cheez".
+    """
+    noun, gender = OBJECT_NAMES.get(shape, OBJECT_NAMES[None])
+    form = gender
+    if oblique and gender == "m":
+        noun, form = OBLIQUE_NOUNS.get(noun, noun), "o"
+    adjective = COLOR_NAMES.get(color, {}).get(form, color or "")
+    return ("%s %s" % (adjective, noun)).strip(), gender
+
+
+def _dikh(gender, negative=False):
+    verb = "rahi" if gender == "f" else "raha"
+    return ("nahi dikh %s" if negative else "dikh %s hai") % verb
+
+
+def join_words(parts):
+    """'a', 'a aur b', 'a, b aur c'."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    return "%s aur %s" % (", ".join(parts[:-1]), parts[-1])
+
+
+def _describe_reply(feedback):
+    if feedback.get("status") == "no_camera":
+        return NO_CAMERA_REPLY
+    # One mention per colour and shape (the largest, which comes first)
+    seen, items = set(), []
+    for obj in feedback.get("objects") or ():
+        key = (obj.get("color"), obj.get("shape"))
+        if key in seen or obj.get("color") not in COLOR_NAMES:
+            continue
+        seen.add(key)
+        items.append(obj)
+    if not items:
+        return "Mujhe abhi saamne koi laal, neeli ya hari cheez nahi dikh rahi."
+    items.sort(key=lambda o: SIDE_ORDER.index(o.get("side"))
+               if o.get("side") in SIDE_ORDER else len(SIDE_ORDER))
+    parts, gender = [], "m"
+    for obj in items:
+        phrase, gender = object_phrase(obj.get("color"), obj.get("shape"))
+        side = SIDE_NAMES.get(obj.get("side"), "")
+        parts.append(("%s %s" % (side, phrase)).strip())
+    # The verb agrees with the nearest (last) object, as spoken Hindi does
+    return "Mujhe %s %s." % (join_words(parts), _dikh(gender))
+
+
+def _go_to_reply(feedback):
+    status = feedback.get("status")
+    phrase, gender = object_phrase(feedback.get("color"), feedback.get("shape"))
+    # Before ke paas / ki taraf / tak
+    obl, _ = object_phrase(feedback.get("color"), feedback.get("shape"), oblique=True)
+    gaya = "gayi" if gender == "f" else "gaya"
+    if status == "reached":
+        return "Main %s ke paas pahunch gaya." % obl
+    if status == "not_found":
+        return "Mujhe %s %s." % (phrase, _dikh(gender, negative=True))
+    if status == "lost":
+        return "%s nazar se kho %s, isliye main ruk gaya." % (phrase[0].upper() + phrase[1:], gaya)
+    if status == "stopped":
+        return "Main ruk gaya. Main %s ki taraf %s chala." % (
+            obl, distance_words(feedback.get("distance_m", 0.0)))
+    if status == "fallen":
+        text = "Main %s ki taraf jaate hue gir gaya." % obl
+        if feedback.get("reset"):
+            text += " Mujhe wapas khada kar diya gaya."
+        return text
+    if status == "stuck":
+        return "Main %s ki taraf aage nahi badh paaya." % obl
+    if status == "gave_up":
+        return "Main %s tak nahi pahunch paaya." % obl
+    if status == "no_camera":
+        return NO_CAMERA_REPLY
+    if status == "busy":
+        return "Gurdy abhi chal raha hai. Pehle use rukne dijiye."
+    return "Robot ne error diya."
+
+
 def _status_reply(feedback):
     total = distance_words(feedback.get("total_distance_m", 0.0))
     if feedback.get("status") == "walking":
@@ -148,6 +241,11 @@ def build_reply(parsed, feedback=None, mode="scripted"):
         body = "Robot ne error diya."
     elif intent == "status":
         body = _status_reply(feedback)
+    elif intent == "describe":
+        body = _describe_reply(feedback)
+    elif intent == "go_to_object" or (intent == "stop" and
+                                      feedback.get("action") == "go_to_object"):
+        body = _go_to_reply(feedback)
     elif intent == "stop":
         if feedback.get("action") in WALK_ACTIONS:
             body = _walk_reply(feedback, parsed)

@@ -6,6 +6,8 @@ Subscribes /gurdy/voice_command (std_msgs/String, JSON, see voice_walk.py):
     {"action": "walk_forward", "distance_m": 0.2, "mode": "rl" | "scripted", "id": "..."}
     {"action": "walk_backward" | "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
     {"action": "stop"}   {"action": "status"}
+    {"action": "describe"}
+    {"action": "go_to_object", "color": "red" | "green" | "blue", "shape": "ball" | "box" | null}
 and publishes exactly one JSON result per command on /gurdy/voice_feedback,
 with the command's action and id, so a client can wait for it with
 `rostopic echo -n 1`. /gurdy/voice_transcript (std_msgs/String, the raw
@@ -35,6 +37,19 @@ a stop during a walk publishes nothing itself; a stop while idle gets status
 "idle". status answers right away, also during a walk. A walk command during a walk is answered with
 status "busy".
 
+describe answers right away (also during a walk) with the objects in the
+latest /gurdy/detections frame from vision_node.py: status "ok" and
+objects [{color, shape, side, bearing_deg, distance_m, area_fraction}], or
+status "no_camera" if no frame arrives within 2 s.
+
+go_to_object runs like a walk (busy, stop, fall handling): the closed-loop
+visual approach of visual_approach.py, side-stepping until the target is
+within ~bearing_tol_deg of the image centre and walking forward until it
+covers ~close_area_ball / ~close_area_box of the image. Its result has
+status reached / not_found / lost / stopped / fallen / stuck / gave_up /
+no_camera, color, shape, moves, steps, forward_m, left_m and target (the
+last sighting).
+
 Run with the position controllers loaded, e.g.
     roslaunch my_gurdy_description voice_demo.launch [rl_model_path:=...]
 """
@@ -42,6 +57,7 @@ import json
 import os
 import queue
 import threading
+import time
 
 import gym
 import numpy as np
@@ -49,6 +65,7 @@ import rospy
 from std_msgs.msg import String
 
 import env as gurdy_env
+import visual_approach
 import voice_walk
 from dqn_policy import greedy_action, load_model, resolve_model_path
 from test_gait import gait as gait_moves, side_gait
@@ -56,6 +73,10 @@ from test_gait import gait as gait_moves, side_gait
 COMMAND_TOPIC = "/gurdy/voice_command"
 FEEDBACK_TOPIC = "/gurdy/voice_feedback"
 TRANSCRIPT_TOPIC = "/gurdy/voice_transcript"
+DETECTIONS_TOPIC = "/gurdy/detections"
+# Wall-clock seconds to wait for a camera frame
+DESCRIBE_TIMEOUT_S = 2.0
+LOOK_TIMEOUT_S = 3.0
 
 
 class EnvRobot(object):
@@ -140,6 +161,13 @@ class VoiceCommandNode(object):
                            "walk_backward": voice_walk.BACKWARD_M_PER_STEP,
                            "walk_left": voice_walk.SIDE_M_PER_STEP,
                            "walk_right": voice_walk.SIDE_M_PER_STEP}
+        self.approach_config = visual_approach.Config(
+            bearing_tol_deg=rospy.get_param("~bearing_tol_deg", visual_approach.BEARING_TOL_DEG),
+            close_area={"ball": rospy.get_param("~close_area_ball",
+                                                visual_approach.CLOSE_AREA["ball"]),
+                        "box": rospy.get_param("~close_area_box",
+                                               visual_approach.CLOSE_AREA["box"])},
+            lost_checks=rospy.get_param("~lost_checks", visual_approach.LOST_CHECKS))
         if rospy.get_param("~reset_on_start", True):
             rospy.loginfo("Resetting the robot")
             self.walk.reset()
@@ -154,10 +182,14 @@ class VoiceCommandNode(object):
         self.current_position = None  # () -> that position now
         self.total_m = 0.0           # distance walked since startup, all directions
         self.last_result = None
+        # Latest /gurdy/detections message (dict), guarded by detection_cond
+        self.detection = None
+        self.detection_cond = threading.Condition()
 
         self.feedback = rospy.Publisher(FEEDBACK_TOPIC, String, queue_size=10)
         rospy.Subscriber(COMMAND_TOPIC, String, self.on_command)
         rospy.Subscriber(TRANSCRIPT_TOPIC, String, self.on_transcript)
+        rospy.Subscriber(DETECTIONS_TOPIC, String, self.on_detections)
         if self.model_path:
             # Load now so the first RL walk doesn't wait for TensorFlow
             self.load_model()
@@ -195,6 +227,42 @@ class VoiceCommandNode(object):
     def on_transcript(self, msg):
         rospy.loginfo("Transcript: %s", msg.data)
 
+    def on_detections(self, msg):
+        try:
+            detection = json.loads(msg.data)
+        except ValueError:
+            rospy.logwarn_throttle(10.0, "Bad detections message: %r" % msg.data[:200])
+            return
+        with self.detection_cond:
+            self.detection = detection
+            self.detection_cond.notify_all()
+
+    def look(self, after, timeout=LOOK_TIMEOUT_S):
+        """
+        The first detections message from a frame taken at or after sim time
+        `after` (s), waiting up to `timeout` wall-clock s; None if none came.
+        """
+        deadline = time.time() + timeout
+        with self.detection_cond:
+            while not rospy.is_shutdown():
+                if self.detection is not None and self.detection.get("stamp", 0.0) >= after:
+                    return self.detection
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None
+                self.detection_cond.wait(min(0.1, remaining))
+        return None
+
+    def describe_view(self):
+        """Feedback fields for describe: the objects in a recent frame."""
+        detection = self.look(rospy.Time.now().to_sec() - 1.0, DESCRIBE_TIMEOUT_S)
+        if detection is None:
+            return {"status": "no_camera",
+                    "message": "no frame on %s; is vision_node.py running?" % DETECTIONS_TOPIC}
+        keys = ("color", "shape", "side", "bearing_deg", "distance_m", "area_fraction")
+        return {"status": "ok",
+                "objects": [{k: o.get(k) for k in keys} for o in detection.get("objects", [])]}
+
     def on_command(self, msg):
         rospy.loginfo("Command: %s", msg.data)
         try:
@@ -218,6 +286,8 @@ class VoiceCommandNode(object):
                 self.publish(cmd, status="idle", message="not walking")
         elif cmd["action"] == "status":
             self.publish(cmd, **self.status())
+        elif cmd["action"] == "describe":
+            self.publish(cmd, **self.describe_view())
         else:
             with self.lock:
                 if self.busy:
@@ -288,6 +358,51 @@ class VoiceCommandNode(object):
             self.busy = False
         self.publish(cmd, **result)
 
+    def execute_approach(self, cmd):
+        """go_to_object: the visual approach (visual_approach.run_approach)."""
+        self.stop_event.clear()
+        self.stop_id = None
+        self.robot.begin()
+        self.robot.lower_lifted_legs()
+        with self.lock:
+            self.current = {"action": "go_to_object", "color": cmd["color"],
+                            "shape": cmd["shape"]}
+            self.current_position = self.robot.forward
+            self.current_start = self.robot.forward()
+        rospy.loginfo("Going to the %s %s", cmd["color"], cmd["shape"] or "object")
+        result = visual_approach.run_approach(
+            self.robot, self.gaits,
+            look=lambda: self.look(rospy.Time.now().to_sec()),
+            color=cmd["color"], shape=cmd["shape"], config=self.approach_config,
+            should_stop=lambda: self.stop_event.is_set() or rospy.is_shutdown(),
+            log=rospy.loginfo)
+
+        if result["status"] == visual_approach.FALLEN:
+            if self.reset_on_fall:
+                rospy.logwarn("Fell (%s); resetting the robot", result.get("fall_reason"))
+                self.walk.reset()
+                for gait in self.gaits.values():
+                    gait.restart()
+                result["reset"] = True
+        else:
+            self.robot.lower_lifted_legs()
+        if result["status"] == visual_approach.STOPPED and self.stop_id is not None:
+            result["stopped_by"] = self.stop_id
+        result["message"] = "%s: %s %s, %d moves, %d steps, forward %.3f m, left %.3f m" % (
+            result["status"], result["color"], result["shape"] or "object", result["moves"],
+            result["steps"], result["forward_m"], result["left_m"])
+        with self.lock:
+            self.total_m += result["distance_m"]
+            result["total_distance_m"] = round(self.total_m, 4)
+            self.last_result = {k: result[k] for k in
+                                ("status", "distance_m", "color", "shape")}
+            self.last_result["action"] = "go_to_object"
+            self.current = None
+            self.current_start = None
+            self.current_position = None
+            self.busy = False
+        self.publish(cmd, **result)
+
     DIRECTIONS = {"walk_forward": "forward", "walk_backward": "backward",
                   "walk_left": "left", "walk_right": "right"}
 
@@ -310,7 +425,10 @@ class VoiceCommandNode(object):
             except queue.Empty:
                 continue
             try:
-                self.execute_walk(cmd)
+                if cmd["action"] == "go_to_object":
+                    self.execute_approach(cmd)
+                else:
+                    self.execute_walk(cmd)
             except Exception as e:
                 rospy.logerr("Walk failed: %s", e)
                 with self.lock:

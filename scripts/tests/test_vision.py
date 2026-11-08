@@ -87,6 +87,7 @@ class TestDetectSynthetic(unittest.TestCase):
         self.assertEqual(blue["shape"], "box")
         self.assertEqual(green["shape"], "box")
         self.assertEqual(red["side"], "center")
+        self.assertFalse(red["clipped"] or red["clipped_bottom"])
         self.assertEqual(blue["side"], "left")
         self.assertEqual(green["side"], "right")
         self.assertAlmostEqual(red["bearing_deg"], 0.0, delta=0.5)
@@ -133,6 +134,7 @@ class TestDetectSynthetic(unittest.TestCase):
         cv2.circle(img, (400, 560), 80, RED, -1)
         obj = vision.detect(noisy(img))[0]
         self.assertTrue(obj["clipped"])
+        self.assertTrue(obj["clipped_bottom"])
         self.assertEqual(obj["shape"], "ball")
         # Cut off at the bottom: no ground point, so the size-based distance
         self.assertAlmostEqual(obj["distance_m"],

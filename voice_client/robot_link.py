@@ -204,6 +204,11 @@ def split_echo_messages(lines):
 SIDE_WALK_SPEED = 0.005 * 0.0011 / (0.546 / 320)
 
 
+# Seconds to wait for a go_to_object result: the approach takes at most
+# visual_approach.MAX_STEPS (800) steps of 0.3 s, plus a margin
+APPROACH_TIMEOUT = 800 * 0.3 + 60.0
+
+
 def walk_timeout(distance_m, speed=0.005, margin=30.0):
     """Seconds to wait for a walk's result: the distance at 5 mm/s, plus margin."""
     return float(distance_m) / speed + margin

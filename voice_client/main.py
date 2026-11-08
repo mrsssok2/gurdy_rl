@@ -1,6 +1,9 @@
 """Voice control for Gurdy: speak a Hindi/Hinglish command, the robot in the
 ROS container walks, and the assistant answers in Hinglish.
 
+Also: "kya dikh raha hai" (describe what the camera sees) and "laal gend ke
+paas jao" (walk up to a coloured object), with vision_node.py running.
+
 Press Enter -> record 4 s -> Gnani STT (prisma-v3.0, hi-IN) -> parse
 (command_parser) -> publish the transcript and command into the container
 (docker exec ... rostopic pub) -> wait for /gurdy/voice_feedback -> build a
@@ -33,8 +36,8 @@ import requests
 
 import command_parser
 import replies
-from robot_link import (DEFAULT_CONTAINER, DEFAULT_ECHO_DELAY, DEFAULT_SETUP,
-                        SIDE_WALK_SPEED, RobotLink, walk_timeout)
+from robot_link import (APPROACH_TIMEOUT, DEFAULT_CONTAINER, DEFAULT_ECHO_DELAY,
+                        DEFAULT_SETUP, SIDE_WALK_SPEED, RobotLink, walk_timeout)
 
 try:
     import msvcrt  # Windows: listen for Enter while the robot walks
@@ -51,6 +54,8 @@ RETRY_DELAYS = (1.0, 2.0, 4.0)  # after a 429 (one request at a time per account
 REPLY_TIMEOUT = 20.0
 
 WALK_INTENTS = ("walk_forward", "walk_backward", "walk_left", "walk_right")
+# Commands during which Gurdy walks: Enter speaks a stop
+MOVING_INTENTS = WALK_INTENTS + ("go_to_object",)
 
 
 def banner(stage, text=""):
@@ -132,7 +137,8 @@ def play_wav(wav_bytes):
 
 def make_command(parsed, mode):
     """
-    voice_command JSON dict for a parsed walk/stop/status, else None.
+    voice_command JSON dict for a parsed walk/stop/status/describe/
+    go_to_object, else None.
     Backward and sideways walks carry no mode: they are always scripted.
     """
     intent = parsed["intent"]
@@ -141,8 +147,10 @@ def make_command(parsed, mode):
         cmd.update(action="walk_forward", distance_m=parsed["distance_m"], mode=mode)
     elif intent in ("walk_backward", "walk_left", "walk_right"):
         cmd.update(action=intent, distance_m=parsed["distance_m"])
-    elif intent in ("stop", "status"):
+    elif intent in ("stop", "status", "describe"):
         cmd["action"] = intent
+    elif intent == "go_to_object":
+        cmd.update(action="go_to_object", color=parsed["color"], shape=parsed.get("shape"))
     else:
         return None
     return cmd
@@ -213,11 +221,13 @@ class VoiceDemo(object):
             self.robot.publish(transcript=transcript)
         else:
             banner("COMMAND", cmd)
-            walking = cmd["action"] in WALK_INTENTS
+            walking = cmd["action"] in MOVING_INTENTS
             if walking and msvcrt is not None:
                 print("[ROBOT] walking... press Enter to speak a stop", flush=True)
             if not walking:
                 timeout = REPLY_TIMEOUT
+            elif cmd["action"] == "go_to_object":
+                timeout = APPROACH_TIMEOUT
             elif cmd["action"] in ("walk_forward", "walk_backward"):
                 timeout = walk_timeout(cmd["distance_m"])
             else:

@@ -3,7 +3,8 @@ Hindi/Hinglish and English.
 
 parse(transcript) returns a dict with at least
     intent     "walk_forward" | "walk_backward" | "walk_left" | "walk_right"
-               | "stop" | "status" | "mode" | "reset" | "unknown"
+               | "stop" | "status" | "mode" | "reset" | "describe"
+               | "go_to_object" | "unknown"
     wake_word  True if the transcript started with (or contained) "Gurdy"
     text       the transcript as given
 plus, per intent:
@@ -11,12 +12,16 @@ plus, per intent:
                   distance_m, distance_cm, defaulted (no distance heard),
                   capped (asked for more than MAX_CM)
     mode          mode: "rl" | "scripted"
+    go_to_object  color: "red" | "green" | "blue", shape: "ball" | "box" | None
     unknown       unsupported: the direction or turn word heard, if that is
                   why ("upar", "turn", ...)
 
 Example: "गरदी आगे बीस सेंटीमीटर चलो।" -> walk_forward, 0.2 m;
 "gurdy baayen bees cm chalo" -> walk_left, 0.2 m;
-"peeche das cm chalo" -> walk_backward, 0.1 m.
+"peeche das cm chalo" -> walk_backward, 0.1 m;
+"क्या दिख रहा है" / "kya dikh raha hai" / "what do you see" -> describe;
+"laal gend ke paas jao" / "नीले डिब्बे तक जाओ" / "go to the green box"
+-> go_to_object (red ball / blue box / green, any shape).
 
 Gurdy's feet move only along their spokes, so it can walk forward, backward
 and sideways but not turn. A sentence with a direction or turn word it
@@ -24,8 +29,11 @@ cannot do ("upar chalo", "baayen mudo"), or with two directions ("aage
 baayen", "aage peeche"), is unknown rather than a forward walk.
 
 The wake word is optional. Intents are checked in the order reset, stop,
-status, mode, walk, so "kitna aage chala?" is a status question and "ruko, aage mat
-chalo" is a stop.
+status, mode, describe, go_to_object, walk, so "kitna aage chala?" is a
+status question, "ruko, aage mat chalo" is a stop, and "laal gend dikh rahi
+hai?" is a describe. go_to_object needs a colour word plus an object word,
+a go word (jao, chalo, paas, tak, ...) or both; a colour alone ("laal") is
+not understood.
 """
 
 import re
@@ -98,6 +106,38 @@ DIRECTION_WORDS = (("walk_forward", FORWARD_WORDS), ("walk_backward", BACKWARD_W
 WALK_VERBS = {
     "चलो", "चल", "चलिए", "चलें", "बढ़ो", "बढ़ो", "बढ़", "जाओ",
     "chalo", "chal", "chaliye", "badho", "barho", "jao", "walk", "move", "go",
+}
+
+# Camera commands. "kya dikh raha hai", "what do you see"
+DESCRIBE_WORDS = {
+    "दिख", "दिखता", "दिखती", "दिखते", "दिखाई", "दिखा", "दिखे", "देख", "देखो", "देखते",
+    "dikh", "dikhta", "dikhti", "dikhte", "dikhai", "dikhayi", "dikha", "dikhe",
+    "dekh", "dekho", "dekhte", "see", "describe", "look",
+}
+# Colour words -> colour, in each gender/number form
+COLOR_WORDS = {}
+for _color, _words in (
+        ("red", ("लाल", "रेड", "laal", "lal", "red")),
+        ("blue", ("नीला", "नीली", "नीले", "ब्लू", "neela", "neeli", "neele", "nila",
+                  "nili", "nile", "blue")),
+        ("green", ("हरा", "हरी", "हरे", "ग्रीन", "hara", "hari", "hare", "haraa", "green"))):
+    for _word in _words:
+        COLOR_WORDS[_word] = _color
+OBJECT_WORDS = {
+    # ball
+    "गेंद": "ball", "गेन्द": "ball", "गेंदा": "ball", "बॉल": "ball", "बाल": "ball",
+    "gend": "ball", "gaind": "ball", "gaend": "ball", "genda": "ball", "ball": "ball",
+    "balls": "ball",
+    # box
+    "डब्बा": "box", "डब्बे": "box", "डिब्बा": "box", "डिब्बे": "box", "बॉक्स": "box",
+    "बक्सा": "box", "dabba": "box", "dabbe": "box", "dibba": "box", "dibbe": "box",
+    "daba": "box", "box": "box", "boxes": "box", "baksa": "box", "cube": "box",
+}
+# Words that mean "go to it", besides WALK_VERBS
+GO_WORDS = {
+    "पास", "तक", "पहुंचो", "पहुँचो", "पहुचो", "पहुंच", "पहुँच",
+    "paas", "pas", "tak", "pahuncho", "pahucho", "pahunch", "approach", "towards", "to",
+    "reach", "fetch",
 }
 
 CM_UNITS = {
@@ -242,6 +282,17 @@ def parse(transcript):
     mode = _mode(tokens)
     if mode:
         result.update(intent="mode", mode=mode)
+        return result
+
+    colors = [COLOR_WORDS[t] for t in tokens if t in COLOR_WORDS]
+    shapes = [OBJECT_WORDS[t] for t in tokens if t in OBJECT_WORDS]
+    go = any(t in WALK_VERBS or t in GO_WORDS for t in tokens)
+    if any(t in DESCRIBE_WORDS for t in tokens) and not go:
+        result["intent"] = "describe"
+        return result
+    if colors and (shapes or go):
+        result.update(intent="go_to_object", color=colors[0],
+                      shape=shapes[0] if shapes else None)
         return result
 
     unsupported = [t for t in tokens if t in UNSUPPORTED_WORDS]

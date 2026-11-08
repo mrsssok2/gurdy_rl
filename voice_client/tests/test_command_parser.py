@@ -214,5 +214,46 @@ class ResetTest(unittest.TestCase):
         self.assertEqual(parse("ruko, reset")["intent"], "reset")
 
 
+class VisionCommandTest(unittest.TestCase):
+    def test_describe(self):
+        for text in ("क्या दिख रहा है", "kya dikh raha hai?", "Gurdy, kya dikhai de raha hai",
+                     "what do you see", "Gurdy what can you see", "तुम्हें क्या दिखता है",
+                     "aage dekho", "laal gend dikh rahi hai kya"):
+            self.assertEqual(parse(text)["intent"], "describe", text)
+
+    def assertGoTo(self, text, color, shape):
+        result = parse(text)
+        self.assertEqual((result["intent"], result.get("color"), result.get("shape")),
+                         ("go_to_object", color, shape), text)
+
+    def test_go_to_object(self):
+        self.assertGoTo("Gurdy, laal gend ke paas jao", "red", "ball")
+        self.assertGoTo("लाल गेंद के पास जाओ", "red", "ball")
+        self.assertGoTo("नीले डिब्बे तक जाओ", "blue", "box")
+        self.assertGoTo("neele dabbe ke paas chalo", "blue", "box")
+        self.assertGoTo("hare dabbe tak pahuncho", "green", "box")
+        self.assertGoTo("हरी गेंद", "green", "ball")
+        self.assertGoTo("go to the green box", "green", "box")
+        self.assertGoTo("red ball", "red", "ball")
+        self.assertGoTo("neeli wali cheez ke paas jao", "blue", None)
+        self.assertGoTo("लाल के पास जाओ", "red", None)
+
+    def test_go_word_wins_over_describe(self):
+        self.assertGoTo("dekho aur laal gend ke paas jao", "red", "ball")
+
+    def test_colour_alone_is_unknown(self):
+        for text in ("laal", "नीला", "hara rang"):
+            self.assertEqual(parse(text)["intent"], "unknown", text)
+
+    def test_stop_and_status_still_win(self):
+        self.assertEqual(parse("ruko, laal gend ke paas mat jao")["intent"], "stop")
+        self.assertEqual(parse("kitna chala")["intent"], "status")
+
+    def test_walks_unchanged(self):
+        self.assertEqual(parse("aage bees cm chalo")["intent"], "walk_forward")
+        self.assertEqual(parse("baayen das cm chalo")["intent"], "walk_left")
+        self.assertEqual(parse("upar chalo")["intent"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -70,10 +70,23 @@ class ParseCommandTest(unittest.TestCase):
         self.assertEqual(vw.parse_command('{"action": "stop"}')["action"], "stop")
         self.assertEqual(vw.parse_command('{"action": "status", "id": 7}')["id"], 7)
 
+    def test_describe_and_go_to_object(self):
+        self.assertEqual(vw.parse_command('{"action": "describe", "id": "d"}'),
+                         {"action": "describe", "id": "d"})
+        cmd = vw.parse_command('{"action": "go_to_object", "color": "red", "shape": "ball"}')
+        self.assertEqual(cmd, {"action": "go_to_object", "color": "red", "shape": "ball",
+                               "id": None})
+        for extra in ("", ', "shape": null', ', "shape": ""'):
+            cmd = vw.parse_command('{"action": "go_to_object", "color": "blue"%s}' % extra)
+            self.assertIsNone(cmd["shape"])
+
     def test_errors(self):
         for data in ("nope", "[1]", '{"action": "dance"}',
                      '{"action": "walk_forward", "mode": "fast"}',
-                     '{"action": "walk_forward", "distance_m": "far"}'):
+                     '{"action": "walk_forward", "distance_m": "far"}',
+                     '{"action": "go_to_object"}',
+                     '{"action": "go_to_object", "color": "pink"}',
+                     '{"action": "go_to_object", "color": "red", "shape": "cone"}'):
             with self.assertRaises(ValueError, msg=data):
                 vw.parse_command(data)
 

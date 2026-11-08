@@ -14,6 +14,8 @@ returns one dict per blob:
     area_fraction  blob area / image area
     distance_m     rough ground distance from the camera, or None
     clipped        True if the blob touches the image border
+    clipped_bottom True if it touches the bottom edge: the object reaches
+                   closer than the ground seen there (~0.13 m)
     side           "left" | "center" | "right" (|bearing| <= center_deg is
                    center)
 
@@ -233,6 +235,7 @@ def detect(bgr, camera=None, ranges=None, min_area_fraction=MIN_AREA_FRACTION,
                 "area_fraction": round(area / image_area, 4),
                 "distance_m": None if distance is None else round(distance, 3),
                 "clipped": clipped,
+                "clipped_bottom": clipped_bottom,
                 "side": side_of(bearing, center_deg),
             })
     objects.sort(key=lambda o: -o["area_fraction"])
@@ -244,7 +247,8 @@ def label(obj):
     text = "%s %s" % (obj["color"], obj["shape"])
     if obj.get("distance_m") is not None:
         text += " %.2fm" % obj["distance_m"]
-    return text + " %+.0fdeg" % obj["bearing_deg"]
+    # + 0.0 turns -0.0 into 0.0, so a centred object reads "+0deg", not "-0deg"
+    return text + " %+.0fdeg" % (round(obj["bearing_deg"]) + 0.0)
 
 
 def annotate(bgr, objects, center_deg=CENTER_DEG, camera=None):

@@ -1,17 +1,36 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- Voice control demo: start Gazebo first (one_touch_spawn_control.launch).
+    <!-- Voice control demo: start Gazebo first (one_touch_spawn_control.launch,
+         world:=demo for the camera commands).
          rl_model_path: Keras DQN model for "RL mode", absolute or relative to
          the package; empty means RL mode falls back to the scripted gait. -->
     <arg name="rl_model_path" default="" />
     <arg name="reset_on_start" default="true" />
+    <!-- vision: start vision_node.py for "kya dikh raha hai" and
+         "laal gend ke paas jao" -->
+    <arg name="vision" default="true" />
+    <!-- Visual approach tuning (visual_approach.py): side-step while the
+         target is more than bearing_tol_deg off centre; stop once it covers
+         close_area_ball / close_area_box of the image; give up after
+         lost_checks frames in a row without it -->
+    <arg name="bearing_tol_deg" default="8.0" />
+    <arg name="close_area_ball" default="0.04" />
+    <arg name="close_area_box" default="0.09" />
+    <arg name="lost_checks" default="3" />
 
     <!-- Position controllers -->
     <include file="$(find my_gurdy_description)/launch/start_controllers.launch" />
+
+    <node if="$(arg vision)" pkg="my_gurdy_description" type="vision_node.py"
+          name="gurdy_vision" output="screen" />
 
     <node pkg="my_gurdy_description" type="voice_command_node.py" name="gurdy_voice_command"
           output="screen">
         <param name="rl_model_path" value="$(arg rl_model_path)" />
         <param name="reset_on_start" value="$(arg reset_on_start)" />
+        <param name="bearing_tol_deg" value="$(arg bearing_tol_deg)" />
+        <param name="close_area_ball" value="$(arg close_area_ball)" />
+        <param name="close_area_box" value="$(arg close_area_box)" />
+        <param name="lost_checks" value="$(arg lost_checks)" />
     </node>
 </launch>

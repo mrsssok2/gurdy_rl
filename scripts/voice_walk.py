@@ -7,6 +7,9 @@ Commands arrive as JSON on /gurdy/voice_command:
     {"action": "walk_backward" | "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
     {"action": "stop", "id": "..."}
     {"action": "status", "id": "..."}
+    {"action": "describe", "id": "..."}
+    {"action": "go_to_object", "color": "red" | "green" | "blue",
+     "shape": "ball" | "box" | null, "id": "..."}
 "id" is optional and echoed back in the feedback so the client can match it.
 
 run_walk() walks until the robot's forward position has gained the
@@ -30,7 +33,12 @@ from collections import deque
 WALK_ACTIONS = ("walk_forward", "walk_backward", "walk_left", "walk_right")
 # Walks with no RL policy
 SCRIPTED_ONLY_ACTIONS = ("walk_backward", "walk_left", "walk_right")
-ACTIONS = WALK_ACTIONS + ("stop", "status")
+# Camera commands (vision_node.py's /gurdy/detections): describe what is in
+# view; walk up to a coloured object (visual_approach.py)
+VISION_ACTIONS = ("describe", "go_to_object")
+ACTIONS = WALK_ACTIONS + ("stop", "status") + VISION_ACTIONS
+OBJECT_COLORS = ("red", "green", "blue")
+OBJECT_SHAPES = ("ball", "box")
 MODES = ("rl", "scripted")
 DEFAULT_DISTANCE_M = 0.2
 MAX_DISTANCE_M = 0.5
@@ -66,7 +74,8 @@ def parse_command(data):
     Validate a voice_command JSON string. Returns a dict with action, id and,
     for the walks, distance_m (clamped to (0, MAX_DISTANCE_M], default
     DEFAULT_DISTANCE_M) and mode (default "scripted"; always "scripted" for
-    walk_backward / walk_left / walk_right). Raises ValueError.
+    walk_backward / walk_left / walk_right); for go_to_object, color and
+    shape (None if not given). Raises ValueError.
     """
     try:
         msg = json.loads(data)
@@ -91,6 +100,14 @@ def parse_command(data):
         if mode not in MODES:
             raise ValueError("unknown mode %r (expected rl or scripted)" % (mode,))
         cmd["mode"] = "scripted" if action in SCRIPTED_ONLY_ACTIONS else mode
+    elif action == "go_to_object":
+        color, shape = msg.get("color"), msg.get("shape")
+        if color not in OBJECT_COLORS:
+            raise ValueError("go_to_object needs a color: %s, got %r"
+                             % (", ".join(OBJECT_COLORS), color))
+        if shape not in OBJECT_SHAPES + (None, ""):
+            raise ValueError("unknown shape %r (expected ball or box)" % (shape,))
+        cmd.update(color=color, shape=shape or None)
     return cmd
 
 
