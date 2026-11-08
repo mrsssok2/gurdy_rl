@@ -10,6 +10,7 @@ import gym.envs.registration
 from std_msgs.msg import Float64
 from pyquaternion import Quaternion
 import math
+from collections import deque
 import tf
 
 # Import necessary ROS message types
@@ -460,6 +461,12 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     # Maximum per-step reward for staying upright (was 5.0, which made
     # standing still worth far more than walking)
     UPRIGHT_BONUS = 0.2
+    # Episode ends once the robot has walked this far forward (+x), in metres
+    TARGET_FORWARD_DISTANCE = 5.0
+    # The robot is "stuck" if it gains less than STUCK_MIN_PROGRESS metres of
+    # forward (+x) progress over the last STUCK_WINDOW steps
+    STUCK_WINDOW = 10
+    STUCK_MIN_PROGRESS = 0.01
 
     def __init__(self):
         """
@@ -515,6 +522,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
 
         # x position at the previous step, used for per-step forward progress
         self.prev_x = self.start_point.x
+        
+        # x positions over the last STUCK_WINDOW steps (plus the start), used
+        # to detect when the robot has stopped making forward progress
+        self.x_history = deque([self.start_point.x], maxlen=self.STUCK_WINDOW + 1)
 
     def _set_action(self, action):
         """
@@ -582,19 +593,25 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             rospy.logwarn("Episode done: Robot has fallen")
             return True
         
-        # Extract distance from observations
-        distance = observations[7]
-        linear_speed = observations[6]
+        # Forward (+x) progress from ground-truth odometry, matching the reward
+        # (the observation's speed and distance are direction-agnostic)
+        current_x = self._odom.pose.pose.position.x
+        self.x_history.append(current_x)
+        forward_distance = current_x - self.start_point.x
         
-        # Check if maximum distance is reached
-        if distance >= 5.0:
-            rospy.loginfo("Episode done: Maximum distance reached")
+        # Check if the target forward distance is reached
+        if forward_distance >= self.TARGET_FORWARD_DISTANCE:
+            rospy.loginfo("Episode done: Target forward distance reached")
             return True
         
-        # Check if the robot is stuck (no movement for a long time)
-        if linear_speed < 0.01 and self.cumulated_steps > 10:
-            rospy.loginfo("Episode done: Robot is stuck")
-            return True
+        # Check if the robot is stuck: too little forward progress over the
+        # last STUCK_WINDOW steps (moving backwards also counts as stuck)
+        if len(self.x_history) > self.STUCK_WINDOW:
+            recent_progress = self.x_history[-1] - self.x_history[0]
+            if recent_progress < self.STUCK_MIN_PROGRESS:
+                rospy.loginfo("Episode done: Robot is stuck (%.3f m forward in last %d steps)",
+                              recent_progress, self.STUCK_WINDOW)
+                return True
         
         # Check for maximum number of steps
         if self.cumulated_steps >= 200:
@@ -648,7 +665,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
 
         # Bonus for reaching the target by walking forward
         completion_bonus = 0
-        if done and forward_distance >= 5.0:
+        if done and forward_distance >= self.TARGET_FORWARD_DISTANCE:
             completion_bonus = 10.0
 
         # Calculate total reward
