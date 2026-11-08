@@ -198,9 +198,10 @@ def split_echo_messages(lines):
         yield "".join(block)
 
 
-# The side-step gait's expected speed: 5 mm/s scaled by its estimated
-# progress per step against --wave-all's (voice_walk.SIDE_M_PER_STEP)
-SIDE_WALK_SPEED = 0.005 * 0.77
+# The side-step gait's expected speed in m/s: the 5 mm/s walk_timeout default
+# (for --wave-all, 0.546 m / 320 steps) scaled by the measured side-step
+# progress per step, 1.1 mm (voice_walk.SIDE_M_PER_STEP, the slower side)
+SIDE_WALK_SPEED = 0.005 * 0.0011 / (0.546 / 320)
 
 
 def walk_timeout(distance_m, speed=0.005, margin=30.0):

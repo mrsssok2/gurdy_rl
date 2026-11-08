@@ -44,17 +44,13 @@ SCRIPTED_MIN_PROGRESS = 0.005  # m
 # The scripted --wave-all gait makes about 0.546 m in 320 steps (README
 # Baseline), 1.7 mm per step. The step limit allows twice that plus a margin.
 SCRIPTED_M_PER_STEP = 0.546 / 320
-# Side-step gait, estimated (not yet measured): 24 steps per cycle that move
-# the body 4 strokes' worth along y (legs 3 and 6 a full stroke each, the four
-# diagonals half), against 16 steps and 4 * cos 30 deg strokes for
-# --wave-all, so about 0.77 * 1.7 = 1.3 mm per step. Measure it with
-# `test_gait.py N --left` and update this.
-SIDE_M_PER_STEP = SCRIPTED_M_PER_STEP * (4.0 / 24) / (4 * math.cos(math.radians(30)) / 16)
-# Backward gait (--wave-all --mirror), assumed as fast as --wave-all since
-# Gurdy is front/back symmetric. Not yet measured; note that --wave --mirror
-# made only 0.037 m against --wave's 0.14 m (README Baseline). Measure with
-# `test_gait.py 20 --wave-all --mirror` and update this.
-BACKWARD_M_PER_STEP = SCRIPTED_M_PER_STEP
+# Side-step gait, measured in Gazebo (README Baseline): --left 0.259 m and
+# --right 0.292 m in 240 steps, 1.08 and 1.22 mm per step. Use the slower
+# side so the step limit is safe both ways.
+SIDE_M_PER_STEP = 0.0011
+# Backward gait (--wave-all --mirror), measured: 0.583 m in 320 steps,
+# 1.82 mm per step (README Baseline).
+BACKWARD_M_PER_STEP = 0.0018
 STEP_MARGIN = 64
 
 # Result statuses

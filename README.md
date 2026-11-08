@@ -51,6 +51,9 @@ A fixed, hand-written gait run through the same walk env (`MyGurdyWalkEnv-v0`,
 | `--wave-all` | `test_gait.py 20 --wave-all` | 20 | **+0.546 m** | none | Reaches the env's 0.5 m target |
 | `--wave` | `test_gait.py 20 --wave` | 20 | +0.14 m | none | Roll and pitch stay under 2° |
 | `--wave --mirror` | `test_gait.py 20 --wave --mirror` | 20 | -0.037 m | none | Mirrored gait toward -x; weak |
+| `--wave-all --mirror` | `test_gait.py 20 --wave-all --mirror` | 20 | **0.583 m backward** | none | 1.82 mm/step; y drift 0.5 cm |
+| `--left` | `test_gait.py 10 --left` | 10 | 0.259 m toward +y | none | 1.08 mm/step; x drift 0.6 cm |
+| `--right` | `test_gait.py 10 --right` | 10 | 0.292 m toward -y | none | 1.22 mm/step; x drift 0.4 cm |
 
 `--wave` strokes the back legs (1, then 4) and pushes them OUT. `--wave-all` adds
 the front legs (5, then 2), which pull IN. Each stroke is LIFT, return reach,
@@ -83,18 +86,17 @@ end (stuck, goal, step limit) and stops only on a fall or after N cycles.
 Gurdy is front/back symmetric, so `test_gait.py 20 --wave-all --mirror` is the
 backward walk: the front legs (2, then 5) push OUT and the back legs (4, then
 1) pull IN. With `--mirror` the script reports the backward distance and the
-y drift. It has not been measured in Gazebo yet. `--wave --mirror` made much
-less than `--wave` (above), so check that the mirrored `--wave-all` really
-matches the forward gait before relying on `voice_walk.BACKWARD_M_PER_STEP`.
+y drift. Unlike `--wave --mirror`, it matches the forward gait: 0.583 m in
+320 steps (Baseline), so `voice_walk.BACKWARD_M_PER_STEP` is 1.8 mm per step.
 
 Gurdy's feet move only along their radial spokes, so it cannot turn, but it
 can step sideways. `test_gait.py 10 --left` walks toward +y: leg 6 (270°)
 pushes OUT, leg 3 (90°) pulls IN, then the diagonal pairs 1 OUT / 4 IN and
 2 OUT / 5 IN, whose x components cancel. That is 24 env steps per cycle.
 `--right` mirrors it across the x axis toward -y. For these the script reports
-the sideways distance (world y) and the x drift. The side-step gait has not
-been measured in Gazebo yet; `voice_walk.SIDE_M_PER_STEP` is an estimate
-(about 1.3 mm per step) until it is.
+the sideways distance (world y) and the x drift. Measured (Baseline), it makes
+1.08 mm per step left and 1.22 mm per step right; `voice_walk.SIDE_M_PER_STEP`
+uses the slower 1.1 mm so step limits and timeouts are safe both ways.
 
 ## Evaluating DQN checkpoints
 
