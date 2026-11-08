@@ -243,25 +243,25 @@
     </xacro:macro>
 
     <xacro:macro name="upper_transmission" params="number">
-        <transmission name="tran${number}">
+        <transmission name="tran_upper_M${number}">
             <type>transmission_interface/SimpleTransmission</type>
             <joint name="head_upperlegM${number}_joint">
                 <hardwareInterface>EffortJointInterface</hardwareInterface>
             </joint>
-            <actuator name="motor${number}">
+            <actuator name="motor_upper_M${number}">
                 <hardwareInterface>EffortJointInterface</hardwareInterface>
                 <mechanicalReduction>1</mechanicalReduction>
             </actuator>
         </transmission>
     </xacro:macro>
     
-    <xacro:macro name="lower_transmission" params="number number_transm">
-        <transmission name="tran${number_transm}">
+    <xacro:macro name="lower_transmission" params="number">
+        <transmission name="tran_lower_M${number}">
             <type>transmission_interface/SimpleTransmission</type>
             <joint name="upperlegM${number}_lowerlegM${number}_joint">
                 <hardwareInterface>EffortJointInterface</hardwareInterface>
             </joint>
-            <actuator name="motor${number_transm}">
+            <actuator name="motor_lower_M${number}">
                 <hardwareInterface>EffortJointInterface</hardwareInterface>
                 <mechanicalReduction>1</mechanicalReduction>
             </actuator>
@@ -281,7 +281,7 @@
         </joint>
         
         <xacro:lowerleg_link number="${number}"/>
-        <xacro:lower_transmission number="${number}" number_transm="${number + 3}"/>
+        <xacro:lower_transmission number="${number}"/>
 
         <xacro:foot_link number="${number}" colour="${colour}"/>
     </xacro:macro>
