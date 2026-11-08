@@ -186,6 +186,42 @@ rostopic pub -1 /gurdy/voice_command std_msgs/String "data: '{\"action\": \"stat
 `data:` string. The node sends exactly one feedback message per command. A stop
 during a walk gets none of its own: the walk's `stopped` result answers it.
 
+### Live dashboard
+
+`dashboard.py` opens a window for the demo video. It needs a display; WSLg
+works, as for the training plots. The left side is a top-down map in metres,
+from `/gurdy/odom`. It shows a grid, the start point, the path trail, Gurdy's
+position with a heading arrow, and the start and target point of the running
+walk. The right side refreshes at about 10 Hz and shows:
+
+- position, heading and roll / pitch / height
+- this walk's distance (done / target) and the total
+- the lifted leg, read from the position controller commands
+- status (STANDING, WALKING, STOPPED, FALLEN) and mode (RL / scripted)
+- the last transcript, command and result from the voice topics
+
+Start it in another container terminal while `voice_demo.launch` runs:
+
+```bash
+cd catkin_ws
+source devel/setup.bash
+rosrun my_gurdy_description dashboard.py
+```
+
+The path is logged at 10 Hz to `output/demo/path_<timestamp>.csv` in the package.
+Plot a saved log as a PNG, with the path coloured by status and the walk
+targets and falls marked. This needs only matplotlib:
+
+```bash
+python3 scripts/plot_path.py output/demo/path_20261109_101500.csv   # writes path_20261109_101500.png
+```
+
+The transcript needs a font with Devanagari. The dashboard looks for Noto
+Sans Devanagari, Lohit Devanagari and others, and logs a warning if it finds
+none. In that case install one in the container, e.g.
+`apt-get install fonts-noto-core`, then delete the matplotlib font cache
+(`rm -rf ~/.cache/matplotlib`).
+
 Offline tests, from the repo root (no ROS needed):
 
 ```bash
