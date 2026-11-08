@@ -197,6 +197,7 @@ hoon." Useful flags:
 - `--dry-run`: print the `docker exec` commands instead of running them
 - `--mode rl`: start in RL mode
 - `--echo-delay 2.0`: seconds `rostopic echo` gets to subscribe before the command goes out
+- `--ui`: also talk from the dashboard's Speak button (see below); Enter still works
 
 To drive the node by hand from inside the container:
 
@@ -231,6 +232,31 @@ Start it in another container terminal while `voice_demo.launch` runs:
 cd catkin_ws
 source devel/setup.bash
 rosrun my_gurdy_description dashboard.py
+```
+
+#### Speak and Stop buttons
+
+The bottom of the dashboard has a big **Speak** button and a red **Stop**
+button, the voice client's state (IDLE / LISTENING / THINKING / ROBOT
+ACTING / SPEAKING) and its last spoken reply. The dashboard runs in the
+container and the mic is on Windows, so the buttons talk to the client over
+two topics:
+
+```
+Speak -> /gurdy/ui/talk  {"id": ...}  -> main.py --ui: record 4 s, STT, parse, robot, TTS
+main.py --ui -> /gurdy/ui/state {"state": "LISTENING", "seq": 3, "reply": ...} -> dashboard
+Stop  -> /gurdy/voice_command {"action": "stop"}   (straight to the robot, no voice)
+```
+
+Start the client with `--ui`. It keeps one `rostopic echo /gurdy/ui/talk`
+open and restarts it if it dies. While Gurdy walks, Speak records and only
+"ruko" (stop) or "wapas" (reset) is accepted, as with Enter. Presses made
+while the client is busy thinking or speaking are dropped. If the client
+doesn't answer a press within 8 s, the dashboard shows NO VOICE CLIENT.
+`_buttons:=false` hides the strip.
+
+```powershell
+python voice_client/main.py --ui
 ```
 
 The path is logged at 10 Hz to `output/demo/path_<timestamp>.csv` in the package.

@@ -219,12 +219,14 @@ class FeedbackListener(object):
     One long-running `rostopic echo` on the feedback topic. Reader threads
     split its stdout into messages, parse them and queue the dicts. Every raw
     stdout/stderr line is logged when verbose, and kept (last 50) for
-    report_exit().
+    report_exit(). parse(block) turns one message's text into the queued
+    value (None: unparsable, logged and dropped); parse_feedback by default.
     """
 
-    def __init__(self, argv, log=print, verbose=False):
+    def __init__(self, argv, log=print, verbose=False, parse=None):
         self.log = log
         self.verbose = verbose
+        self.parse = parse or parse_feedback
         self.messages = queue.Queue()
         self.stdout_tail = []
         self.stderr_tail = []
@@ -248,9 +250,9 @@ class FeedbackListener(object):
     def _read_stdout(self):
         try:
             for block in split_echo_messages(self._stdout_lines()):
-                feedback = parse_feedback(block)
+                feedback = self.parse(block)
                 if feedback is None:
-                    self.log("[robot] could not parse feedback message: %r" % block[:500])
+                    self.log("[robot] could not parse message: %r" % block[:500])
                 else:
                     self.messages.put(feedback)
         except (ValueError, OSError):
@@ -300,6 +302,85 @@ class FeedbackListener(object):
                 pass
 
 
+class TopicStream(object):
+    """
+    Keeps one FeedbackListener (from start()) running in a background thread
+    and queues its messages; when the echo process dies it is reported and
+    restarted, after restart_delay s, doubling up to max_delay while it keeps
+    dying at once. start() returning None (a dry run) ends the stream.
+    """
+
+    def __init__(self, start, log=print, restart_delay=1.0, max_delay=10.0, name="echo"):
+        self.start = start
+        self.log = log
+        self.restart_delay = restart_delay
+        self.max_delay = max_delay
+        self.name = name
+        self.messages = queue.Queue()
+        self.restarts = 0
+        self.listener = None
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._run)
+        self._thread.daemon = True
+        self._thread.start()
+
+    def _run(self):
+        delay = self.restart_delay
+        while not self._stop.is_set():
+            listener = self.start()
+            if listener is None:
+                return
+            with self._lock:
+                if self._stop.is_set():
+                    listener.close()
+                    return
+                self.listener = listener
+            started = time.time()
+            while not self._stop.is_set():
+                msg = listener.get(0.1)
+                if msg is not None:
+                    self.messages.put(msg)
+                elif listener.finished() and listener.messages.empty():
+                    break
+            if self._stop.is_set():
+                break
+            listener.report_exit()
+            listener.close()
+            if time.time() - started > 30.0:
+                delay = self.restart_delay  # it ran a while: not a crash loop
+            self.restarts += 1
+            self.log("[robot] restarting rostopic echo (%s) in %.0f s" % (self.name, delay))
+            self._stop.wait(delay)
+            delay = min(delay * 2, self.max_delay)
+
+    def get(self, timeout=0.0):
+        """Next message, or None if none arrived within timeout (0: don't wait)."""
+        try:
+            if timeout <= 0:
+                return self.messages.get_nowait()
+            return self.messages.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def drain(self):
+        """All queued messages (oldest first); the queue is then empty."""
+        out = []
+        while True:
+            msg = self.get()
+            if msg is None:
+                return out
+            out.append(msg)
+
+    def close(self):
+        with self._lock:
+            self._stop.set()
+            listener = self.listener
+        if listener is not None:
+            listener.close()
+        self._thread.join(timeout=5.0)
+
+
 class RobotLink(object):
     def __init__(self, container=DEFAULT_CONTAINER, setup=DEFAULT_SETUP,
                  echo_delay=DEFAULT_ECHO_DELAY, dry_run=False, verbose=False, log=print):
@@ -338,13 +419,22 @@ class RobotLink(object):
         script = publish_script(transcript, command)
         return self._popen(script) if script else None
 
-    def listen(self):
-        """Start a FeedbackListener on the feedback topic (None in a dry run)."""
-        argv = self._argv(echo_script(FEEDBACK_TOPIC))
+    def publish_text(self, topic, text):
+        """Publish one std_msgs/String on topic, without waiting. Returns the process."""
+        return self._popen(pub_script(topic, text))
+
+    def listen(self, topic=FEEDBACK_TOPIC, parse=None):
+        """Start a FeedbackListener on topic (None in a dry run)."""
+        argv = self._argv(echo_script(topic))
         self._show(argv)
         if self.dry_run:
             return None
-        return FeedbackListener(argv, log=self.log, verbose=self.verbose)
+        return FeedbackListener(argv, log=self.log, verbose=self.verbose, parse=parse)
+
+    def stream(self, topic, parse=None, restart_delay=1.0):
+        """A TopicStream: a `rostopic echo` on topic, kept alive."""
+        return TopicStream(lambda: self.listen(topic, parse), log=self.log,
+                           restart_delay=restart_delay, name=topic)
 
     def send_and_wait(self, command, transcript=None, timeout=30.0, poll=None):
         """

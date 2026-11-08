@@ -390,5 +390,109 @@ class PlotPathTest(unittest.TestCase):
         self.assertTrue(os.path.getsize(out) > 10000)
 
 
+def ui_msg(state, seq, session="s1", **kw):
+    return json.dumps(dict(kw, state=state, session=session, seq=seq))
+
+
+class VoiceUiStateTest(unittest.TestCase):
+    def test_states_and_reply(self):
+        s = ds.DashboardState()
+        self.assertEqual(s.voice_display(0.0)[0], ds.V_UNKNOWN)
+        self.assertTrue(s.ui_state(ui_msg("LISTENING", 1, detail="speak now")))
+        self.assertEqual(s.voice_display(0.0), (ds.V_LISTENING, "speak now"))
+        s.ui_state(ui_msg("SPEAKING", 4, reply="Theek hai"))
+        s.ui_state(ui_msg("IDLE", 5))
+        self.assertEqual(s.voice_display(0.0), (ds.V_IDLE, ""))
+        self.assertEqual(s.voice_reply, "Theek hai")  # kept after IDLE
+
+    def test_out_of_order_and_bad(self):
+        s = ds.DashboardState()
+        s.ui_state(ui_msg("THINKING", 3))
+        self.assertFalse(s.ui_state(ui_msg("LISTENING", 2)))   # late
+        self.assertFalse(s.ui_state("not json"))
+        self.assertFalse(s.ui_state(json.dumps({"state": "DANCING"})))
+        self.assertFalse(s.ui_state(json.dumps(["IDLE"])))
+        self.assertEqual(s.voice_state, ds.V_THINKING)
+        self.assertTrue(s.ui_state(ui_msg("LISTENING", 1, session="s2")))  # client restarted
+
+    def test_speak_waiting_then_offline(self):
+        s = ds.DashboardState()
+        s.talk_request("r1", 100.0)
+        self.assertEqual(s.voice_display(101.0)[0], ds.V_WAITING)
+        self.assertEqual(s.voice_display(100.0 + ds.UI_ANSWER_TIMEOUT_S + 1)[0], ds.V_OFFLINE)
+        s.ui_state(ui_msg("LISTENING", 1, id="r1"))  # the client answers
+        self.assertEqual(s.voice_display(200.0)[0], ds.V_LISTENING)
+
+    def test_speak_while_busy(self):
+        s = ds.DashboardState()
+        s.ui_state(ui_msg("THINKING", 1))
+        s.talk_request("r2", 100.0)
+        label, detail = s.voice_display(100.0 + ds.UI_ANSWER_TIMEOUT_S + 1)
+        self.assertEqual(label, ds.V_THINKING)
+        self.assertIn("busy", detail)
+
+    def test_stop_note(self):
+        s = ds.DashboardState()
+        s.ui_state(ui_msg("ROBOT ACTING", 1, detail="walking"))
+        s.stop_pressed("ui-1")
+        self.assertEqual(s.voice_display(0.0)[1], "stop sent (ui-1)")
+        s.ui_state(ui_msg("SPEAKING", 2, reply="Gurdy ruk gaya"))
+        self.assertEqual(s.voice_display(0.0)[1], "")
+
+
+class VoiceButtonsTest(unittest.TestCase):
+    def click(self, fig, button):
+        from matplotlib.backend_bases import MouseEvent
+        fig.canvas.draw()
+        x, y = button.ax.transAxes.transform((0.5, 0.5))
+        for name in ("button_press_event", "button_release_event"):
+            fig.canvas.callbacks.process(name, MouseEvent(name, fig.canvas, x, y, button=1))
+
+    def test_buttons_publish(self):
+        import matplotlib.pyplot as plt
+        s = make_state()
+        talks, stops = [], []
+        fig = plt.figure(figsize=(20, 9.5))
+        board = dashboard.Dashboard(fig, s, threading.Lock(), dashboard.CameraFeed(),
+                                    on_speak=talks.append, on_stop=stops.append)
+        board.update()
+        self.assertEqual(board.voice_text.get_text(), ds.V_UNKNOWN)
+        self.click(fig, board.speak_button)
+        self.assertEqual(len(talks), 1)
+        req = json.loads(talks[0])
+        self.assertEqual(req["source"], "dashboard")
+        self.assertEqual(s.talk_pending[0], req["id"])
+        board.update()
+        self.assertEqual(board.voice_text.get_text(), ds.V_WAITING)
+        s.ui_state(ui_msg("ROBOT ACTING", 3, id=req["id"], detail="walking"))
+        board.update()
+        self.assertEqual(board.voice_text.get_text(), "ROBOT ACTING")
+        self.click(fig, board.stop_button)
+        cmd = json.loads(stops[0])
+        self.assertEqual(cmd["action"], "stop")
+        self.assertTrue(cmd["id"].startswith("ui-"))
+        s.ui_state(ui_msg("SPEAKING", 4, reply="Main ek AI assistant hoon. Gurdy ruk gaya. " * 6))
+        board.update()
+        self.assertEqual(board.voice_text.get_bbox_patch().get_facecolor()[:3],
+                         matplotlib.colors.to_rgb(dashboard.VOICE_COLORS["SPEAKING"]))
+        self.assertLessEqual(len(board.reply_text.get_text().split("\n")), 3)
+        self.assertTrue(board.reply_text.get_text().endswith("..."))
+        fig.canvas.draw()
+        plt.close(fig)
+
+    def test_no_buttons_without_callbacks(self):
+        import matplotlib.pyplot as plt
+        fig = plt.figure(figsize=(15, 8))
+        board = dashboard.Dashboard(fig, make_state(), threading.Lock())
+        board.update()
+        self.assertIsNone(board.voice_text)
+        self.assertFalse(hasattr(board, "speak_button"))
+        plt.close(fig)
+
+    def test_button_label_fallback(self):
+        self.assertEqual(dashboard.button_label("", "*", "Speak"), "* Speak")
+        self.assertEqual(dashboard.button_label("A", "*", "Speak"), "A Speak")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -13,22 +13,39 @@ target) and the total, roll / pitch / height, the lifted leg (from the
 position controller commands), status (STANDING / WALKING / STOPPED /
 FALLEN), mode (RL / scripted), and the last transcript, command and result
 from /gurdy/voice_transcript, /gurdy/voice_command and /gurdy/voice_feedback.
+Bottom: a big Speak button (publishes a talk request on /gurdy/ui/talk for
+voice_client/main.py --ui, which has the mic on Windows), a red Stop button
+(publishes a stop straight on /gurdy/voice_command, no voice needed), the
+voice client's state from /gurdy/ui/state (IDLE / LISTENING / THINKING /
+ROBOT ACTING / SPEAKING) and its last spoken reply.
 
 The path is logged at 10 Hz to output/demo/path_<timestamp>.csv (in the
 package; ~outdir overrides). Plot a saved log with plot_path.py.
 
     rosrun my_gurdy_description dashboard.py
     rosrun my_gurdy_description dashboard.py _camera:=false   # no camera panel
+    rosrun my_gurdy_description dashboard.py _buttons:=false  # no Speak / Stop
 """
 import csv
 import os
 import threading
 import time
 
-from dashboard_state import (CSV_FIELDS, FALLEN, STANDING, STOPPED, WALKING,
-                             DashboardState)
+from dashboard_state import (CSV_FIELDS, FALLEN, STANDING, STOPPED, UI_STATE_TOPIC,
+                             UI_TALK_TOPIC, V_ACTING, V_IDLE, V_LISTENING, V_OFFLINE,
+                             V_SPEAKING, V_THINKING, V_UNKNOWN, V_WAITING,
+                             VOICE_COMMAND_TOPIC, WALKING, DashboardState,
+                             new_request_id, stop_command_data, talk_request_data)
 
 STATUS_COLORS = {STANDING: "#2e7d32", WALKING: "#1565c0", STOPPED: "#ef6c00", FALLEN: "#c62828"}
+VOICE_COLORS = {V_IDLE: "#546e7a", V_LISTENING: "#c62828", V_THINKING: "#f9a825",
+                V_ACTING: "#1565c0", V_SPEAKING: "#2e7d32", V_WAITING: "#8e24aa",
+                V_OFFLINE: "#9e9e9e", V_UNKNOWN: "#9e9e9e"}
+SPEAK_COLOR, SPEAK_HOVER = "#1565c0", "#1e88e5"
+STOP_COLOR, STOP_HOVER = "#c62828", "#e53935"
+REPLY_WRAP = 70       # characters per line for the last reply
+# Height (figure fraction) of the bottom strip with the buttons
+BUTTON_STRIP = 0.17
 REFRESH_MS = 100
 MIN_SPAN_M = 0.6      # smallest map extent
 MAP_MARGIN_M = 0.15
@@ -99,6 +116,22 @@ def find_devanagari_font():
     return None
 
 
+def has_glyphs(text):
+    """True if matplotlib's default font draws every character of text."""
+    from matplotlib import font_manager
+    from matplotlib.ft2font import FT2Font
+    try:
+        charmap = FT2Font(font_manager.findfont(font_manager.FontProperties())).get_charmap()
+    except Exception:
+        return False
+    return all(ord(c) in charmap for c in text if not c.isspace())
+
+
+def button_label(icon, fallback, text):
+    """'icon text' if the font has the icon, else 'fallback text' (no boxes)."""
+    return "%s %s" % (icon if has_glyphs(icon) else fallback, text)
+
+
 def wrap(text, width=TEXT_WRAP, lines=2):
     """Wrap text to at most `lines` lines of `width`, with an ellipsis if cut."""
     import textwrap
@@ -112,17 +145,24 @@ def wrap(text, width=TEXT_WRAP, lines=2):
 class Dashboard(object):
     """The figure; update() redraws it from a DashboardState under lock."""
 
-    def __init__(self, fig, state, lock, camera=None):
-        """camera: a CameraFeed for the middle camera panel, or None for none."""
+    def __init__(self, fig, state, lock, camera=None, on_speak=None, on_stop=None):
+        """
+        camera: a CameraFeed for the middle camera panel, or None for none.
+        on_speak(data) / on_stop(data): publish the talk request / the stop
+        command (String data). With both None there are no buttons.
+        """
         self.fig, self.state, self.lock = fig, state, lock
         self.camera = camera
+        self.on_speak, self.on_stop = on_speak, on_stop
+        buttons = on_speak is not None or on_stop is not None
+        bottom = 0.07 + (BUTTON_STRIP if buttons else 0.0)
         if camera is None:
             grid = fig.add_gridspec(1, 2, width_ratios=[3, 2], wspace=0.08,
-                                    left=0.06, right=0.98, top=0.93, bottom=0.07)
+                                    left=0.06, right=0.98, top=0.93, bottom=bottom)
             map_cell, panel_cell = grid[0, 0], grid[0, 1]
         else:
             grid = fig.add_gridspec(1, 3, width_ratios=[3, 3, 2.4], wspace=0.1,
-                                    left=0.04, right=0.99, top=0.93, bottom=0.07)
+                                    left=0.04, right=0.99, top=0.93, bottom=bottom)
             map_cell, panel_cell = grid[0, 0], grid[0, 2]
             cam = self.cam_ax = fig.add_subplot(grid[0, 1])
             cam.set_title("Camera - what Gurdy sees", fontsize=18)
@@ -172,6 +212,62 @@ class Dashboard(object):
             heard = [label for label, _ in state.panel()].index("heard")
             self.values[heard].set_fontproperties(
                 FontProperties(fname=self.devanagari_font, size=17))
+        self.voice_text = None
+        if buttons:
+            self._add_voice_strip()
+
+    def _add_voice_strip(self):
+        """Bottom strip: Speak and Stop buttons, voice state, last reply."""
+        from matplotlib.widgets import Button
+        fig = self.fig
+        h = BUTTON_STRIP - 0.03
+        speak_ax = fig.add_axes([0.02, 0.02, 0.15, h])
+        stop_ax = fig.add_axes([0.18, 0.02, 0.11, h])
+        self.speak_button = Button(speak_ax, button_label("\U0001F3A4", "\u25CF", "Speak"),
+                                   color=SPEAK_COLOR, hovercolor=SPEAK_HOVER)
+        self.stop_button = Button(stop_ax, button_label("\u23F9", "\u25A0", "Stop"),
+                                  color=STOP_COLOR, hovercolor=STOP_HOVER)
+        for button in (self.speak_button, self.stop_button):
+            button.label.set_fontsize(26)
+            button.label.set_fontweight("bold")
+            button.label.set_color("white")
+        self.speak_button.on_clicked(self.speak)
+        self.stop_button.on_clicked(self.stop)
+        y = 0.02 + h
+        self.voice_text = fig.text(0.31, y - 0.012, V_UNKNOWN, ha="left", va="top", fontsize=24,
+                                   fontweight="bold", color="white",
+                                   bbox=dict(boxstyle="round,pad=0.35",
+                                             fc=VOICE_COLORS[V_UNKNOWN]))
+        self.voice_detail = fig.text(0.31, 0.03, "", ha="left", va="bottom", fontsize=13,
+                                     color="#555555")
+        fig.text(0.52, y - 0.005, "last reply", ha="left", va="top", fontsize=14,
+                 color="#555555")
+        self.reply_text = fig.text(0.52, y - 0.045, "-", ha="left", va="top", fontsize=17)
+
+    def speak(self, _event=None):
+        """Speak button: ask the voice client to listen."""
+        request_id = new_request_id()
+        with self.lock:
+            self.state.talk_request(request_id, time.time())
+        if self.on_speak is not None:
+            self.on_speak(talk_request_data(request_id))
+
+    def stop(self, _event=None):
+        """Stop button: a stop command straight to the robot."""
+        request_id = "ui-" + new_request_id()
+        with self.lock:
+            self.state.stop_pressed(request_id)
+        if self.on_stop is not None:
+            self.on_stop(stop_command_data(request_id))
+
+    def update_voice(self, now):
+        with self.lock:
+            label, detail = self.state.voice_display(now)
+            reply = self.state.voice_reply
+        self.voice_text.set_text(label)
+        self.voice_text.get_bbox_patch().set_facecolor(VOICE_COLORS.get(label, "#9e9e9e"))
+        self.voice_detail.set_text(wrap(detail, 60, 1) if detail else "")
+        self.reply_text.set_text(wrap(reply, REPLY_WRAP, 3) if reply else "-")
 
     def _fit(self, xs, ys):
         """Grow the map limits to cover xs, ys (never shrink, so it doesn't jitter)."""
@@ -218,6 +314,8 @@ class Dashboard(object):
         import math
         if self.camera is not None:
             self.update_camera(time.time())
+        if self.voice_text is not None:
+            self.update_voice(time.time())
         with self.lock:
             s = self.state
             trail_x, trail_y = list(s.trail_x), list(s.trail_y)
@@ -324,6 +422,19 @@ def main():
     rospy.Subscriber("/gurdy/voice_transcript", String, text_callback(state.transcript))
     rospy.Subscriber("/gurdy/voice_command", String, text_callback(state.command))
     rospy.Subscriber("/gurdy/voice_feedback", String, text_callback(state.feedback))
+    rospy.Subscriber(UI_STATE_TOPIC, String, text_callback(state.ui_state))
+    # Not latched: a talk request must not replay to a restarted voice client
+    talk_pub = rospy.Publisher(UI_TALK_TOPIC, String, queue_size=5)
+    command_pub = rospy.Publisher(VOICE_COMMAND_TOPIC, String, queue_size=5)
+
+    def on_speak(data):
+        rospy.loginfo("Speak pressed: %s on %s (%d subscriber(s))", data, UI_TALK_TOPIC,
+                      talk_pub.get_num_connections())
+        talk_pub.publish(String(data=data))
+
+    def on_stop(data):
+        rospy.loginfo("Stop pressed: %s on %s", data, VOICE_COMMAND_TOPIC)
+        command_pub.publish(String(data=data))
 
     camera = CameraFeed() if rospy.get_param("~camera", True) else None
     if camera is not None:
@@ -337,8 +448,11 @@ def main():
                 camera.set(rgb, time.time())
         rospy.Subscriber(CAMERA_TOPIC, Image, on_image, queue_size=1, buff_size=2 ** 24)
 
-    fig = plt.figure("Gurdy dashboard", figsize=(15, 8) if camera is None else (20, 8))
-    dashboard = Dashboard(fig, state, lock, camera)
+    buttons = rospy.get_param("~buttons", True)
+    height = 9.5 if buttons else 8
+    fig = plt.figure("Gurdy dashboard", figsize=(15 if camera is None else 20, height))
+    dashboard = Dashboard(fig, state, lock, camera, on_speak=on_speak if buttons else None,
+                          on_stop=on_stop if buttons else None)
     if dashboard.devanagari_font:
         rospy.loginfo("Transcript font: %s", dashboard.devanagari_font)
     else:

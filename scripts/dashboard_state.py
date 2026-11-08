@@ -9,11 +9,14 @@ DashboardState is fed the messages dashboard.py receives:
     transcript()     /gurdy/voice_transcript
     command()        /gurdy/voice_command (JSON)
     feedback()       /gurdy/voice_feedback (JSON)
+    ui_state()       /gurdy/ui/state (JSON, from voice_client/main.py --ui)
+    talk_request()   the Speak button was pressed (published on /gurdy/ui/talk)
 and works out the status, the current walk's progress and target point,
 the path trail and the CSV log rows.
 """
 import json
 import math
+import uuid
 
 STANDING, WALKING, STOPPED, FALLEN = "STANDING", "WALKING", "STOPPED", "FALLEN"
 
@@ -37,6 +40,44 @@ MODE_LABELS = {"rl": "RL", "scripted": "scripted", "rl+scripted": "RL -> scripte
 # +y / -y, as the node measures it (env.get_lateral_position).
 WALK_DIRECTIONS = {"walk_forward": (1.0, 0.0), "walk_backward": (-1.0, 0.0),
                    "walk_left": (0.0, 1.0), "walk_right": (0.0, -1.0)}
+
+# --- Voice UI: the dashboard's Speak / Stop buttons ---------------------------
+# Speak publishes a talk request on UI_TALK_TOPIC; the voice client
+# (voice_client/main.py --ui, on Windows with the mic) records, runs
+# STT -> parse -> robot -> TTS, and reports its state on UI_STATE_TOPIC.
+# Stop publishes a stop straight on /gurdy/voice_command (no voice needed).
+# Both are std_msgs/String with JSON data:
+#   talk:  {"id": "<request id>", "source": "dashboard"}
+#   state: {"state": "LISTENING", "session": "<client run>", "seq": 3,
+#           "id": "<request id>", "reply": "...", "heard": "...", "detail": "..."}
+# State messages are separate `rostopic pub` processes and can arrive out of
+# order, so the dashboard keeps only the highest seq of a session.
+UI_TALK_TOPIC = "/gurdy/ui/talk"
+UI_STATE_TOPIC = "/gurdy/ui/state"
+VOICE_COMMAND_TOPIC = "/gurdy/voice_command"
+V_IDLE, V_LISTENING, V_THINKING, V_ACTING, V_SPEAKING = (
+    "IDLE", "LISTENING", "THINKING", "ROBOT ACTING", "SPEAKING")
+VOICE_STATES = (V_IDLE, V_LISTENING, V_THINKING, V_ACTING, V_SPEAKING)
+# Shown only by the dashboard
+V_WAITING = "WAITING FOR MIC"    # Speak pressed, the client hasn't answered yet
+V_OFFLINE = "NO VOICE CLIENT"    # ... and it didn't within UI_ANSWER_TIMEOUT_S
+V_UNKNOWN = "VOICE ?"            # no state from the client seen yet
+# Wall-clock s to wait for the client to answer a Speak press
+UI_ANSWER_TIMEOUT_S = 8.0
+
+
+def new_request_id():
+    return uuid.uuid4().hex[:8]
+
+
+def talk_request_data(request_id):
+    """/gurdy/ui/talk String data for a Speak press."""
+    return json.dumps({"id": request_id, "source": "dashboard"})
+
+
+def stop_command_data(request_id):
+    """/gurdy/voice_command String data for the Stop button."""
+    return json.dumps({"id": request_id, "action": "stop", "source": "dashboard"})
 
 
 def quaternion_to_rpy(qx, qy, qz, qw):
@@ -117,6 +158,15 @@ class DashboardState(object):
         self.last_walk = None          # (status, distance_m, requested_m) of the last one
         self.total_m = 0.0
         self._last_log = None
+
+        # Voice UI (see UI_STATE_TOPIC)
+        self.voice_state = None        # last state from the voice client
+        self.voice_reply = ""          # its last spoken reply
+        self.voice_detail = ""
+        self.ui_session = None
+        self.ui_seq = None
+        self.talk_pending = None       # (request id, wall time) of an unanswered Speak
+        self.ui_note = ""              # e.g. "stop sent"
 
     # --- inputs -----------------------------------------------------------
 
@@ -203,6 +253,54 @@ class DashboardState(object):
         if fb.get("mode_used"):
             self.mode = fb["mode_used"]
         self.walk = None
+
+    def talk_request(self, request_id, now):
+        """The Speak button was pressed at wall time now."""
+        self.talk_pending = (request_id, now)
+        self.ui_note = ""
+
+    def stop_pressed(self, request_id):
+        self.ui_note = "stop sent (%s)" % request_id
+
+    def ui_state(self, data):
+        """
+        A /gurdy/ui/state message. Returns True if it was used, False if it
+        was bad or older (lower seq) than one already shown.
+        """
+        try:
+            msg = json.loads(data)
+        except ValueError:
+            return False
+        if not isinstance(msg, dict) or msg.get("state") not in VOICE_STATES:
+            return False
+        session, seq = msg.get("session"), msg.get("seq")
+        if (session is not None and session == self.ui_session and
+                isinstance(seq, int) and self.ui_seq is not None and seq <= self.ui_seq):
+            return False  # arrived after a newer one
+        self.ui_session, self.ui_seq = session, seq if isinstance(seq, int) else None
+        self.voice_state = msg["state"]
+        if msg.get("reply"):
+            self.voice_reply = str(msg["reply"])
+        self.voice_detail = str(msg.get("detail") or "")
+        # Any news from the client after a Speak press answers it
+        self.talk_pending = None
+        self.ui_note = ""
+        return True
+
+    def voice_display(self, now):
+        """(indicator label, detail line) for the voice UI at wall time now."""
+        detail = self.ui_note or self.voice_detail
+        if self.talk_pending is not None:
+            waited = now - self.talk_pending[1]
+            if waited < UI_ANSWER_TIMEOUT_S:
+                return V_WAITING, "Speak pressed; waiting for the voice client"
+            if self.voice_state in (None, V_IDLE):
+                return V_OFFLINE, ("no answer in %.0f s: is voice_client/main.py --ui "
+                                   "running?" % UI_ANSWER_TIMEOUT_S)
+            return self.voice_state, "busy; Speak works again when IDLE"
+        if self.voice_state is None:
+            return V_UNKNOWN, detail or "no state from the voice client yet"
+        return self.voice_state, detail
 
     # --- derived ----------------------------------------------------------
 
