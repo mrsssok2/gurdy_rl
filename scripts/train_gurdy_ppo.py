@@ -265,8 +265,7 @@ def main():
         # Reset environment
         observation = env.reset()
         episode_reward = 0
-        last_value = 0
-        
+
         # Episode loop
         for step in range(nsteps):
             # Get state features
@@ -285,12 +284,14 @@ def main():
             observation = new_observation
             episode_reward += reward
             
-            # For last state value
-            if step == nsteps - 1 or done:
-                last_value = value
-            
             # Train every update_interval steps or at the end of the episode
             if (len(ppo_agent.buffer['states']) >= update_interval) or done or (step == nsteps - 1):
+                # Bootstrap value for the state after the last stored step:
+                # 0 if the episode ended, otherwise the critic's V(next state)
+                if done:
+                    last_value = 0.0
+                else:
+                    last_value = ppo_agent.get_value(extract_state_features(new_observation))
                 actor_loss, critic_loss, kl_div = ppo_agent.train(last_value)
                 actor_losses.append(actor_loss)
                 critic_losses.append(critic_loss)

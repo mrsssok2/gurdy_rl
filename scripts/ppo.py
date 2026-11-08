@@ -99,7 +99,20 @@ class PPO:
         value = self.critic.predict(state, verbose=0)[0, 0]
         
         return int(action), value, log_prob
-    
+
+    def get_value(self, state):
+        """
+        Get the critic's value estimate for a state
+
+        Args:
+            state: State to evaluate
+
+        Returns:
+            float: V(state)
+        """
+        state = np.reshape(state, [1, self.state_size])
+        return float(self.critic.predict(state, verbose=0)[0, 0])
+
     def remember(self, state, action, reward, value, log_prob, done):
         """Store experience in buffer"""
         self.buffer['states'].append(state)
@@ -135,22 +148,20 @@ class PPO:
         """
         advantages = np.zeros_like(rewards, dtype=np.float32)
         returns = np.zeros_like(rewards, dtype=np.float32)
-        
-        next_done = 0.0  # Assume episode not done at the end
-        next_value = last_value
-        
-        # Compute GAE-Lambda advantage
+
+        # Compute GAE-Lambda advantage. dones[t] says whether the episode
+        # ended on step t, i.e. whether s_{t+1} may be bootstrapped from.
+        next_advantage = 0.0
         for t in reversed(range(len(rewards))):
             if t == len(rewards) - 1:
-                next_value = last_value
-                next_done = 0.0  # Assume episode not done at the end
+                next_value = last_value  # V(s_{t+1}) for the state after the buffer
             else:
                 next_value = values[t + 1]
-                next_done = float(dones[t + 1])
-                
-            delta = rewards[t] + self.gamma * next_value * (1.0 - next_done) - values[t]
-            advantages[t] = delta + self.gamma * self.lam * (1.0 - next_done) * \
-                          (advantages[t + 1] if t < len(rewards) - 1 else 0.0)
+            not_done = 1.0 - float(dones[t])
+
+            delta = rewards[t] + self.gamma * next_value * not_done - values[t]
+            advantages[t] = delta + self.gamma * self.lam * not_done * next_advantage
+            next_advantage = advantages[t]
             
         # Compute returns for critic optimization
         returns = advantages + np.array(values)
@@ -248,8 +259,9 @@ class PPO:
                 
                 # Train critic
                 with tf.GradientTape() as tape:
-                    # Predict values
-                    predicted_values = self.critic(batch_states)
+                    # Predict values; squeeze (B, 1) -> (B,) to match batch_returns,
+                    # otherwise the subtraction broadcasts to (B, B)
+                    predicted_values = tf.squeeze(self.critic(batch_states), axis=1)
                     
                     # Calculate MSE loss
                     critic_loss = tf.reduce_mean(tf.square(batch_returns - predicted_values))
