@@ -201,14 +201,21 @@ def format_foot_poses():
                         "  (reset / STAND)" if pose == STAND_STATE else ""))
     return "\n".join(lines)
 
-# Observation layout (length 9). The first six entries encode each leg's
-# current target pose, legs 1-6, as one value (2 * lifted + out) / 3:
+# Observation layout (length 9 + len(ACTIONS) + 1 = 35). The first six
+# entries encode each leg's current target pose, legs 1-6, as one value
+# (2 * lifted + out) / 3:
 #   GROUND_IN 0, GROUND_OUT 1/3, LIFT_IN 2/3, LIFT_OUT 1
+# The leg poses alone don't give the gait's phase: in the scripted --wave
+# gait the poses are the same before leg 1's stroke and before leg 4's. So
+# the observation also holds the last action, one-hot (all zeros right after
+# a reset), and the step count within the episode, divided by the step limit.
 OBS_LEG_CODES = slice(0, 6)
 OBS_FORWARD_VELOCITY = 6
 OBS_FORWARD_DISTANCE = 7
 OBS_HEAD_HEIGHT = 8
-OBS_SIZE = 9
+OBS_LAST_ACTION = slice(9, 9 + len(ACTIONS))
+OBS_STEP_FRACTION = 9 + len(ACTIONS)
+OBS_SIZE = OBS_STEP_FRACTION + 1
 
 def pose_code(pose):
     """Observation value of a leg pose, see OBS_LEG_CODES."""
@@ -227,6 +234,20 @@ def leg_state_codes(leg_states):
 def leg_states_from_obs(observations):
     """Decode the observation back to a pose name per leg, legs 1-6."""
     return [pose_from_code(code) for code in observations[OBS_LEG_CODES]]
+
+def last_action_one_hot(action):
+    """OBS_LAST_ACTION values for the last action index, or None after a reset."""
+    one_hot = [0.0] * len(ACTIONS)
+    if action is not None:
+        one_hot[action] = 1.0
+    return one_hot
+
+def last_action_from_obs(observations):
+    """Last action index from the observation, or None right after a reset."""
+    one_hot = np.asarray(observations[OBS_LAST_ACTION])
+    if one_hot.max() <= 0.5:
+        return None
+    return int(np.argmax(one_hot))
 
 class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
@@ -831,18 +852,24 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Define action space: see ACTIONS
         self.action_space = spaces.Discrete(len(ACTIONS))
         
-        # Define observation space
+        # Define observation space (see OBS_SIZE)
         # Leg foot-pose codes (6, see OBS_LEG_CODES), signed forward
-        # velocity, signed forward distance from start, head height. Velocity
-        # and distance go negative when the robot moves backwards.
-        low = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, -10.0, 0.0])
-        high = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 10.0, 1.0])
+        # velocity, signed forward distance from start, head height, last
+        # action one-hot (len(ACTIONS)), step fraction. Velocity and distance
+        # go negative when the robot moves backwards.
+        low = np.array([0.0] * 6 + [-2.0, -10.0, 0.0] +
+                       [0.0] * len(ACTIONS) + [0.0])
+        high = np.array([1.0] * 6 + [2.0, 10.0, 1.0] +
+                        [1.0] * len(ACTIONS) + [1.0])
+        assert low.shape == (OBS_SIZE,)
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         
         # Initialize state variables
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         # Current target foot pose of each leg (see ACTIONS)
         self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
+        # Last action index, None until the first step of an episode
+        self.last_action = None
         rospy.loginfo(format_foot_poses())
         # Episode step limit, shared with the training scripts' nsteps
         self.max_steps = int(rospy.get_param("/gurdy/nsteps", self.DEFAULT_MAX_STEPS))
@@ -866,6 +893,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # i.e. every leg in STAND_STATE.
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
+        self.last_action = None
         self.distance_moved = 0.0
         self._has_fallen = False
         
@@ -892,6 +920,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Update the pose of the action's leg (all legs to STAND_STATE for
         # STAND); the other legs keep their current poses
         leg, move = ACTIONS[action]
+        self.last_action = int(action)
         if leg is None:
             self.leg_states = dict.fromkeys(LEGS, STAND_STATE)
         else:
@@ -913,7 +942,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Define robot observations
         
         Returns:
-            np.array: [leg pose codes (6), forward_velocity, forward_distance, head_height]
+            np.array: [leg pose codes (6), forward_velocity, forward_distance,
+                       head_height, last action one-hot (25), step fraction];
+                      see OBS_SIZE
         """
 
         # Signed forward velocity from odometry (negative = moving backwards)
@@ -925,11 +956,16 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Get head height
         head_height = self.head_height
         
+        # Steps taken this episode, over the step limit, in [0, 1]
+        step_fraction = min(1.0, float(self.cumulated_steps) / max(1, self.max_steps))
+
         # Return observations: 6 leg pose codes + forward velocity +
-        # forward distance + height. The codes are the commanded targets; the
-        # legs may lag or sag short of them.
+        # forward distance + height + last action + step fraction. The codes
+        # are the commanded targets; the legs may lag or sag short of them.
         return np.array(leg_state_codes(self.leg_states) +
-                        [forward_velocity, forward_distance, head_height])
+                        [forward_velocity, forward_distance, head_height] +
+                        last_action_one_hot(self.last_action) +
+                        [step_fraction])
     
     def _is_done(self, observations, fallen):
         """

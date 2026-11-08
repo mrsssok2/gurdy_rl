@@ -114,7 +114,13 @@ def convert_obs_to_state(observations, reference_height):
         height_str = "STABLE"
     
     # Combine discretized values into a state string
-    state_str = joint_pattern + "_" + speed_str + "_" + dist_str + "_" + height_str
+    # Last action, so states at different points of the gait cycle with the
+    # same leg poses stay apart: "A7", or "A-" right after a reset
+    last_action = env.last_action_from_obs(observations)
+    action_str = "A-" if last_action is None else "A%d" % last_action
+    
+    state_str = (joint_pattern + "_" + speed_str + "_" + dist_str + "_" +
+                 height_str + "_" + action_str)
     
     return state_str
 

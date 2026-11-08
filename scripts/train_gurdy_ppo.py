@@ -45,7 +45,8 @@ def extract_state_features(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [leg pose codes (6), forward_velocity, forward_distance, head_height]
+                                [leg pose codes (6), forward_velocity, forward_distance, head_height,
+                                 last action one-hot (25), step fraction]
     
     Returns:
         np.array: Feature array for PPO
@@ -64,12 +65,18 @@ def extract_state_features(observations):
     normalized_distance = np.array([distance / 10.0])  # Assuming max distance is about 10.0
     normalized_height = np.array([head_height / 0.3])  # Assuming max height is about 0.3
     
-    # Combine features
+    # Gait phase: last action one-hot and step fraction, already in [0, 1]
+    # (see env.OBS_LAST_ACTION and env.OBS_STEP_FRACTION)
+    phase = np.asarray(observations[env.OBS_LAST_ACTION.start:env.OBS_SIZE], dtype=np.float32)
+    
+    # Combine features: one per observation entry (env.OBS_SIZE), which is
+    # the state_size the agent is built with
     return np.concatenate([
         leg_codes,  # already in [0, 1]
         normalized_speed, 
         normalized_distance, 
-        normalized_height
+        normalized_height,
+        phase
     ])
 
 def save_model(ppo_object, episode, outdir):
@@ -227,7 +234,7 @@ def main():
     
     # Set state and action sizes
     # Using observation directly: 6 leg pose codes + speed + distance + height = 9 features
-    state_size = env.observation_space.shape[0]  # Using direct observations (9)
+    state_size = env.observation_space.shape[0]  # One feature per observation entry (env.OBS_SIZE)
     action_size = env.action_space.n
     
     # Create PPO agent
