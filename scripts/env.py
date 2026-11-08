@@ -246,12 +246,12 @@ class MyGurdySingleLegEnv(gym.Env):
         self._check_publishers_connection()
         
         # Define action and observation spaces
-        self.action_space = spaces.Discrete(5)
+        self.action_space = spaces.Discrete(len(ACTIONS))
         
         # Add height of the robot head to observations
         self.observation_space = spaces.Box(
-            low=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -2.0, -10.0, 0.0]),  # min values for 6 joints, forward velocity, forward distance, height
-            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 10.0, 1.0]),        # max values for 6 joints, forward velocity, forward distance, height
+            low=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, -10.0, 0.0]),  # min values for 6 group state flags, forward velocity, forward distance, height
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 10.0, 1.0]),   # max values for 6 group state flags, forward velocity, forward distance, height
             dtype=np.float32
         )
         
