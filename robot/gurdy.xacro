@@ -252,7 +252,10 @@
             <parent link="upperleg_M${number}_link"/>
             <child link="lowerleg_M${number}_link"/>
             <origin xyz="0 0.0095 0.06" rpy="0 0 3.14159"/>
-            <limit lower="-2.9" upper="1.5708" effort="${joint_effort}" velocity="${joint_velocity}"/>
+            <!-- Upper limit 0: the knee may only fold one way (shin back under
+                 the thigh). With +1.57 allowed, legs could buckle backwards on
+                 landing after a reset and stay stuck in that mirrored pose. -->
+            <limit lower="-2.9" upper="0.0" effort="${joint_effort}" velocity="${joint_velocity}"/>
             <dynamics damping="${joint_damping}" friction="${joint_friction}"/>
             <axis xyz="0 1 0"/>
         </joint>

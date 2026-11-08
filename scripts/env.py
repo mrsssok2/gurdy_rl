@@ -42,7 +42,7 @@ def euler_from_quaternion(quaternion):
 # Joint directions, worked out from robot/gurdy.xacro (both axes are local y):
 #   - upper leg (limits -1.55..0): 0 points straight down; negative swings the
 #     leg outward and up, reaching about horizontal at -1.55.
-#   - lower leg (limits -2.9..1.57): the lower leg's angle from vertical is
+#   - lower leg (limits -2.9..0): the lower leg's angle from vertical is
 #     (upper - lower), with negative meaning outward. So lower = upper keeps it
 #     vertical, and a lower angle above upper tilts the foot outward.
 # Upper -1.0 puts the thigh 57 deg out from vertical. Lower -0.6 tilts the shin

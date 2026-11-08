@@ -10,7 +10,7 @@ std of base roll, pitch and height and the x, y drift over that second.
 
 Angles are in radians, ordered upper legs M1-M6, then lower legs M1-M6
 (the same order as NEUTRAL_POSE in env.py). Limits: upper -1.55..0,
-lower -2.9..1.57; out-of-range values are clipped with a warning.
+lower -2.9..0; out-of-range values are clipped with a warning.
 
 Usage (with Gazebo and the controllers running):
     rosrun my_gurdy_description test_pose.py -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 \\
@@ -28,7 +28,7 @@ from std_msgs.msg import Float64
 from std_srvs.srv import Empty
 
 UPPER_LIMITS = (-1.55, 0.0)
-LOWER_LIMITS = (-2.9, 1.5708)
+LOWER_LIMITS = (-2.9, 0.0)
 SETTLE_TIME = 3.0  # s
 SAMPLE_TIME = 1.0  # s
 
