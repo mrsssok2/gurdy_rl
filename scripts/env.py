@@ -44,6 +44,8 @@ class MyGurdySingleLegEnv(gym.Env):
     MAX_TILT_DEG = 60.0
     # Fallen if the base drops below this fraction of its post-reset height
     FALL_HEIGHT_RATIO = 0.5
+    # Gazebo model name of the ground; only head contacts with it count as falls
+    GROUND_MODEL_NAME = "ground_plane"
 
     def __init__(self):
         """
@@ -210,10 +212,15 @@ class MyGurdySingleLegEnv(gym.Env):
             data (ContactsState): Contact states message
         """
         self._bumper_states = data
-        
-        # Check if there are any contacts (indicating a fall)
-        if data.states:
-            self._has_fallen = True
+
+        # Only head-ground contact means a fall. Contacts between the head
+        # and the robot's own links (e.g. its legs) are ignored. Collision
+        # names are scoped as "model::link::collision".
+        for state in data.states:
+            if (state.collision1_name.startswith(self.GROUND_MODEL_NAME + "::") or
+                    state.collision2_name.startswith(self.GROUND_MODEL_NAME + "::")):
+                self._has_fallen = True
+                break
         
     def check_robot_fallen(self):
         """
@@ -231,7 +238,7 @@ class MyGurdySingleLegEnv(gym.Env):
         z = self._odom.pose.pose.position.z
 
         if self._has_fallen:
-            self.fall_reason = "head bumper contact"
+            self.fall_reason = "head bumper contact with the ground"
         elif abs(roll) > max_tilt:
             self.fall_reason = "roll %.1f deg exceeds %.0f deg" % (
                 math.degrees(roll), self.MAX_TILT_DEG)
