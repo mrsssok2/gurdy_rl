@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Launch the Gazebo simulation and load robot -->
+    <include file="$(find my_gurdy_description)/launch/spawn_gurdy.launch" />
+    
+    <!-- Wait for robot and controllers to load properly -->
+    <arg name="startup_delay" default="5.0" /> <!-- seconds -->
+    <node pkg="rospy" type="sleep" name="sleep" args="$(arg startup_delay)" />
+    
+    <!-- Launch the training node -->
+    <include file="$(find my_gurdy_description)/launch/train_gurdy.launch" />
+</launch>

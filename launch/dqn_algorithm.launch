@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Load the parameters for the DQN algorithm -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/params_dqn.yaml" />
+    
+    <!-- Launch the training node -->
+    <node pkg="my_gurdy_description" type="train_gurdy_dqn.py" name="gurdy_dqn" output="screen"/>
+</launch>

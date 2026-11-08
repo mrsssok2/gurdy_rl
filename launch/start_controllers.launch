@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Start the position controllers -->
+  <node name="position_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+    output="screen" ns="/gurdy" args="head_upperlegM1_joint_position_controller 
+                                   head_upperlegM2_joint_position_controller 
+                                   head_upperlegM3_joint_position_controller 
+                                   head_upperlegM4_joint_position_controller 
+                                   head_upperlegM5_joint_position_controller 
+                                   head_upperlegM6_joint_position_controller 
+                                   upperlegM1_lowerlegM1_joint_position_controller 
+                                   upperlegM2_lowerlegM2_joint_position_controller 
+                                   upperlegM3_lowerlegM3_joint_position_controller 
+                                   upperlegM4_lowerlegM4_joint_position_controller 
+                                   upperlegM5_lowerlegM5_joint_position_controller 
+                                   upperlegM6_lowerlegM6_joint_position_controller"/>
+</launch>

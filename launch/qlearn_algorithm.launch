@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Load the parameters for the Q-Learning algorithm -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/params.yaml" />
+    
+    <!-- Launch the training node -->
+    <node pkg="my_gurdy_description" type="train_gurdy.py" name="gurdy_qlearn" output="screen">
+        <param name="algorithm" value="qlearn" />
+    </node>
+</launch>

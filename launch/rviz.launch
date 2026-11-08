@@ -1,0 +1,9 @@
+<launch>
+    <!-- Argument for the robot model -->
+    <arg name="gurdy" default="$(find my_gurdy_description)/robot/gurdy.xacro"/>
+
+  
+
+    <!-- Launch RViz -->
+    <node name="rviz" pkg="rviz" type="rviz" args=""/>
+</launch>

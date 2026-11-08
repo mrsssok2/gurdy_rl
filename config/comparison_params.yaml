@@ -1,0 +1,46 @@
+---
+# Algorithm comparison configuration
+
+# List of reinforcement learning algorithms to compare
+algorithms:
+  - name: qlearn
+    color: blue
+    line_style: "-"
+    marker: "o"
+    learning_rate: 0.2
+    initial_performance: -10.0
+    
+  - name: sarsa
+    color: green
+    line_style: "-"
+    marker: "s"
+    learning_rate: 0.25
+    initial_performance: -8.0
+    
+  - name: dqn
+    color: red
+    line_style: "-"
+    marker: "^"
+    learning_rate: 0.4
+    initial_performance: -12.0
+    
+  - name: policy_gradient
+    color: purple
+    line_style: "-"
+    marker: "d"
+    learning_rate: 0.3
+    initial_performance: -15.0
+    
+  - name: ppo
+    color: orange
+    line_style: "-"
+    marker: "x"
+    learning_rate: 0.5
+    initial_performance: -8.0
+    
+  - name: sac
+    color: cyan
+    line_style: "-"
+    marker: "+"
+    learning_rate: 0.45
+    initial_performance: -9.0

@@ -1,0 +1,78 @@
+# Gurdy Robot - OpenAI ROS Parameters
+gurdy:
+  # Environment parameters
+  environment:
+    # Time related parameters
+    running_step: 0.1  # Duration of each simulation step (seconds)
+    wait_time: 0.1     # Wait time between actions (seconds)
+    max_episode_steps: 200  # Maximum number of steps per episode
+    
+    # Initial pose parameters
+    init_joint_pose:
+      joint1: 0.0
+      joint2: 0.0
+      joint3: 0.0
+      joint4: 0.0
+      joint5: 0.0
+      joint6: 0.0
+    
+    # Reward function parameters
+    reward_distance_multiplier: 10.0  # Multiplier for distance reward
+    reward_speed_multiplier: 1.0      # Multiplier for speed reward
+    energy_penalty_multiplier: 0.1    # Penalty for energy usage
+    
+    # Done criteria
+    min_distance: 0.1      # Minimum distance to consider progress
+    goal_distance: 5.0     # Distance to goal to complete episode
+    max_joint_limit: 0.9   # Maximum joint angle (absolute value)
+    
+  # Controller parameters
+  controllers:
+    joint_controller_list:
+      - "head_upperlegM1_joint_position_controller"
+      - "head_upperlegM2_joint_position_controller"
+      - "head_upperlegM3_joint_position_controller"
+      - "head_upperlegM4_joint_position_controller"
+      - "head_upperlegM5_joint_position_controller"
+      - "head_upperlegM6_joint_position_controller"
+    joint_increment: 0.1   # Joint position increment per step
+    
+  # Q-learning parameters
+  alpha: 0.15          # Learning rate
+  gamma: 0.95          # Discount factor
+  epsilon: 0.9         # Initial exploration rate
+  epsilon_discount: 0.995  # Exploration rate decay
+  min_epsilon: 0.05    # Minimum exploration rate
+  nepisodes: 100 # Number of episodes
+  nsteps: 200          # Maximum steps per episode
+    
+  # State discretization parameters
+  joint_states:
+    low: -0.3
+    high: 0.3
+  speed_states:
+    slow: 0.1
+    fast: 0.5
+  distance_states:
+    near: 1.0
+    far: 5.0
+      
+  # Training output parameters
+  save_model_freq: 100   # Save model every N episodes
+  log_freq: 1           # Log information every N episodes
+  outdir: "/home/user/catkin_ws/src/my_gurdy_description/output"      # Output directory for saved models
+  load_model_path: ""   # Path to load a pre-trained model (empty to train from scratch)
+    
+  # Robot physical parameters
+  robot:
+    joint_limits:
+      upper_leg:
+        min: -1.55
+        max: 0.0
+      lower_leg:
+        min: -2.9
+        max: 1.57
+    
+    # Base noise and physics parameters
+    noise_level: 0.05
+    gravity: -9.81

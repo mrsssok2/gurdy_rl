@@ -1,0 +1,25 @@
+# RL Comparison Plotter Configuration
+algorithms:
+  - qlearn
+  - sarsa
+  - dqn
+  - policy_gradient
+  - ppo
+  - sac
+
+colors:
+  - blue
+  - green
+  - red
+  - purple
+  - orange
+  - cyan
+
+# Window size for moving average calculation
+window_size: 10
+
+# How often to update the plot (in Hz)
+update_frequency: 1.0
+
+# Maximum number of episodes to display
+max_episodes: 100

@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Start Gazebo with an empty world -->
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="use_sim_time" value="true"/>
+    </include>
+    
+    <!-- Load the URDF into the ROS Parameter Server -->
+    <param name="robot_description" command="$(find xacro)/xacro $(find my_gurdy_description)/robot/gurdy.xacro"/>
+    
+    <!-- Load controller configuration -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/gurdy_control.yaml"/>
+    
+    <!-- Spawn the robot -->
+    <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+          args="-urdf -x 0.5 -y 0.0 -z 0.18 -model gurdy -param robot_description"/>
+    
+    <!-- Start robot state publisher -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+    
+    <!-- Start controllers for the main robot -->
+    <node name="controller_spawner" pkg="controller_manager" type="spawner" 
+          ns="/gurdy" output="screen" 
+          args="joint_state_controller 
+                head_upperlegM1_joint_position_controller
+                head_upperlegM2_joint_position_controller
+                head_upperlegM3_joint_position_controller
+                head_upperlegM4_joint_position_controller
+                head_upperlegM5_joint_position_controller
+                head_upperlegM6_joint_position_controller
+                upperlegM1_lowerlegM1_joint_position_controller
+                upperlegM2_lowerlegM2_joint_position_controller
+                upperlegM3_lowerlegM3_joint_position_controller
+                upperlegM4_lowerlegM4_joint_position_controller
+                upperlegM5_lowerlegM5_joint_position_controller
+                upperlegM6_lowerlegM6_joint_position_controller"/>
+    
+    <!-- Run the test after a short delay -->
+    <node name="test_controllers" pkg="my_gurdy_description" type="test_gurdy.py" 
+          output="screen" launch-prefix="bash -c 'sleep 5; $0 $@'"/>
+</launch>

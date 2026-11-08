@@ -1,0 +1,69 @@
+---
+# Algorithm comparison configuration
+# This file defines the properties and performance characteristics
+# of each reinforcement learning algorithm for visualization
+
+# List of reinforcement learning algorithms to compare
+algorithms:
+  - name: qlearn
+    color: blue
+    line_style: "-"
+    marker: "o"
+    learning_rate: 0.2
+    initial_performance: -10.0
+    description: "Q-Learning is a value-based method that learns the optimal action-value function."
+    
+  - name: sarsa
+    color: green
+    line_style: "-"
+    marker: "s"
+    learning_rate: 0.25
+    initial_performance: -8.0
+    description: "SARSA (State-Action-Reward-State-Action) is an on-policy TD control algorithm."
+    
+  - name: dqn
+    color: red
+    line_style: "-"
+    marker: "^"
+    learning_rate: 0.4
+    initial_performance: -12.0
+    description: "Deep Q-Network (DQN) uses neural networks to approximate Q-values."
+    
+  - name: policy_gradient
+    color: purple
+    line_style: "-"
+    marker: "d"
+    learning_rate: 0.3
+    initial_performance: -15.0
+    description: "Policy Gradient directly optimizes policy parameters using gradient ascent."
+    
+  - name: ppo
+    color: orange
+    line_style: "-"
+    marker: "x"
+    learning_rate: 0.5
+    initial_performance: -8.0
+    description: "Proximal Policy Optimization (PPO) is a policy gradient method that limits policy change."
+    
+  - name: sac
+    color: cyan
+    line_style: "-"
+    marker: "+"
+    learning_rate: 0.45
+    initial_performance: -9.0
+    description: "Soft Actor-Critic (SAC) is an off-policy actor-critic algorithm with entropy maximization."
+
+# Visualization settings
+visualization:
+  plot_titles:
+    main: "Reinforcement Learning Algorithm Comparison"
+    rewards: "Episode Rewards"
+    avg_rewards: "Average Rewards (Smoothed)"
+    losses: "Training Loss"
+    fall_counts: "Cumulative Falls"
+    heights: "Robot Stability (Head Height)"
+    final_performance: "Final Algorithm Performance"
+  
+  update_interval: 0.5  # Update interval for plots in seconds
+  smoothing_window: 10  # Window size for smoothing average rewards
+  max_episodes: 100     # Number of episodes to simulate/display

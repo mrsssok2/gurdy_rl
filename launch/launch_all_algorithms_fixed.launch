@@ -1,0 +1,81 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Start the Gazebo simulation with the robot -->
+    <include file="$(find my_gurdy_description)/launch/spawn_gurdy.launch" />
+    
+    <!-- Make sure controllers are loaded -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/gurdy_control.yaml" />
+    
+    <!-- Start the joint state controller -->
+    <node name="controller_spawner" pkg="controller_manager" type="spawner" 
+          args="gurdy/joint_state_controller
+                gurdy/head_upperlegM1_joint_position_controller
+                gurdy/head_upperlegM2_joint_position_controller
+                gurdy/head_upperlegM3_joint_position_controller
+                gurdy/head_upperlegM4_joint_position_controller
+                gurdy/head_upperlegM5_joint_position_controller
+                gurdy/head_upperlegM6_joint_position_controller
+                gurdy/upperlegM1_lowerlegM1_joint_position_controller
+                gurdy/upperlegM2_lowerlegM2_joint_position_controller
+                gurdy/upperlegM3_lowerlegM3_joint_position_controller
+                gurdy/upperlegM4_lowerlegM4_joint_position_controller
+                gurdy/upperlegM5_lowerlegM5_joint_position_controller
+                gurdy/upperlegM6_lowerlegM6_joint_position_controller"
+          respawn="false" output="screen" />
+    
+    <!-- Start the robot state publisher -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+    
+    <!-- Wait for everything to initialize properly -->
+    <arg name="startup_delay" default="10.0" /> <!-- increased delay to ensure controllers are up -->
+    <node pkg="rospy" type="sleep" name="sleep" args="$(arg startup_delay)" />
+    
+    <!-- Start the metrics publisher node -->
+    <node pkg="my_gurdy_description" type="training_metrics_publisher.py" name="training_metrics_publisher" output="screen"/>
+    
+    <!-- Start the comparison visualizer -->
+    <node pkg="my_gurdy_description" type="ros_comparison_visualizer.py" name="comparison_visualizer" output="screen"/>
+    
+    <!-- Launch training nodes with sequential delays -->
+    
+    <!-- Q-learning -->
+    <node pkg="my_gurdy_description" type="start_training.py" name="gurdy_qlearn" output="screen">
+        <param name="algorithm_name" value="qlearn" />
+    </node>
+    
+    <!-- Small delay between algorithm launches -->
+    <node pkg="rospy" type="sleep" name="sleep_after_qlearn" args="2.0" />
+    
+    <!-- SARSA -->
+    <node pkg="my_gurdy_description" type="train_gurdy_sarsa.py" name="gurdy_sarsa" output="screen">
+        <param name="algorithm_name" value="sarsa" />
+    </node>
+    
+    <node pkg="rospy" type="sleep" name="sleep_after_sarsa" args="2.0" />
+    
+    <!-- DQN -->
+    <node pkg="my_gurdy_description" type="train_gurdy_dqn.py" name="gurdy_dqn" output="screen">
+        <param name="algorithm_name" value="dqn" />
+    </node>
+    
+    <node pkg="rospy" type="sleep" name="sleep_after_dqn" args="2.0" />
+    
+    <!-- Policy Gradient -->
+    <node pkg="my_gurdy_description" type="train_gurdy_policy_gradient.py" name="gurdy_policy_gradient" output="screen">
+        <param name="algorithm_name" value="policy_gradient" />
+    </node>
+    
+    <node pkg="rospy" type="sleep" name="sleep_after_pg" args="2.0" />
+    
+    <!-- PPO -->
+    <node pkg="my_gurdy_description" type="train_gurdy_ppo.py" name="gurdy_ppo" output="screen">
+        <param name="algorithm_name" value="ppo" />
+    </node>
+    
+    <node pkg="rospy" type="sleep" name="sleep_after_ppo" args="2.0" />
+    
+    <!-- SAC -->
+    <node pkg="my_gurdy_description" type="train_gurdy_sac.py" name="gurdy_sac" output="screen">
+        <param name="algorithm_name" value="sac" />
+    </node>
+</launch>

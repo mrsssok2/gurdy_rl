@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Define arguments -->
+    <arg name="x" default="0.5" />
+    <arg name="y" default="0.0" />
+    <arg name="z" default="0.18" />
+    
+    <arg name="robot_name" default="gurdy" />
+    <arg name="xacro_file_path" default="$(find my_gurdy_description)/robot/gurdy.xacro" />
+    
+    <!-- Load the URDF into the ROS Parameter Server -->
+    <param name="robot_description" command="$(find xacro)/xacro $(arg xacro_file_path)" />
+    
+    <!-- Start Gazebo with an empty world -->
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="use_sim_time" value="true" />
+    </include>
+    
+    <!-- Run a python script to send a service call to gazebo_ros to spawn a URDF robot -->
+    <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+          args="-urdf -x $(arg x) -y $(arg y) -z $(arg z) -model $(arg robot_name) -param robot_description" />
+    
+    <!-- Include the control launch file -->
+    <include file="$(find my_gurdy_description)/launch/gurdy_control.launch"/>
+</launch>

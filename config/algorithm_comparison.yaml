@@ -1,0 +1,24 @@
+algorithm_runner:
+  # List of algorithms to run
+  algorithms:
+    - qlearn
+    - sarsa
+    - dqn
+    - policy_gradient
+    - ppo
+    - sac
+  
+  # Number of episodes to run for each algorithm
+  episodes_per_algorithm: 100
+  
+  # Update plot every N episodes
+  plot_update_freq: 10
+  
+  # Save results every N episodes
+  save_freq: 20
+  
+  # Output directory
+  output_dir: "/home/user/catkin_ws/src/my_gurdy_description/results"
+  
+  # Package name
+  package_name: "my_gurdy_description"

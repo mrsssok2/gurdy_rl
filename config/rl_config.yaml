@@ -1,0 +1,88 @@
+# RL Algorithm Configuration
+
+# Environment configuration
+environment:
+  name: "MockEnvironment"
+  state_size: 9
+  action_size: 7
+  max_steps: 200
+  reset_world_or_sim: "SIMULATION"
+
+# Training configuration
+training:
+  episodes: 30
+  output_dir: "./rl_output"
+  load_models: false
+  parallel_training: true
+
+# Common parameters across algorithms
+common:
+  gamma: 0.99
+  batch_size: 64
+
+# Algorithm-specific parameters
+algorithms:
+  qlearn:
+    enabled: true
+    alpha: 0.2
+    epsilon: 0.9
+    epsilon_decay: 0.995
+    epsilon_min: 0.05
+    color: "blue"
+    description: "Standard Q-Learning (tabular)"
+
+  sarsa:
+    enabled: true
+    alpha: 0.2 
+    epsilon: 0.9
+    epsilon_decay: 0.995
+    epsilon_min: 0.05
+    color: "green"
+    description: "SARSA: On-policy TD Learning"
+
+  dqn:
+    enabled: true
+    epsilon: 0.9
+    epsilon_decay: 0.995
+    epsilon_min: 0.05
+    learning_rate: 0.001
+    batch_size: 32
+    memory_size: 10000
+    target_update_freq: 10
+    color: "red"
+    description: "Deep Q-Network"
+
+  ppo:
+    enabled: true
+    actor_lr: 0.0003
+    critic_lr: 0.001
+    clip_ratio: 0.2
+    batch_size: 64
+    color: "purple"
+    description: "Proximal Policy Optimization"
+
+  sac:
+    enabled: true
+    alpha: 0.2
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    tau: 0.005
+    batch_size: 64
+    memory_size: 10000
+    color: "orange"
+    description: "Soft Actor-Critic"
+
+  pg:
+    enabled: true
+    learning_rate: 0.01
+    color: "brown"
+    description: "Policy Gradient (REINFORCE)"
+
+# Visualization configuration
+visualization:
+  update_interval: 1.0
+  plot_rewards: true
+  plot_q_values: true
+  plot_stability: true
+  live_update: true
+  compare_algorithms: true

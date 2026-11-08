@@ -1,0 +1,66 @@
+# RL Algorithms Parameters
+
+# General settings
+general:
+  episodes: 100
+  max_steps: 1000
+  output_dir: "./rl_output"
+  visualize: true
+
+# Q-Learning
+qlearn:
+  enabled: true
+  alpha: 0.1
+  gamma: 0.9
+  epsilon: 0.9
+  epsilon_decay: 0.995
+  min_epsilon: 0.05
+
+# SARSA
+sarsa:
+  enabled: true
+  alpha: 0.1
+  gamma: 0.9
+  epsilon: 0.9
+  epsilon_decay: 0.995
+  min_epsilon: 0.05
+
+# DQN
+dqn:
+  enabled: true
+  learning_rate: 0.001
+  gamma: 0.99
+  epsilon: 0.9
+  epsilon_decay: 0.995
+  min_epsilon: 0.05
+  batch_size: 32
+  memory_size: 10000
+  hidden_size: 24
+
+# PPO
+ppo:
+  enabled: true
+  actor_lr: 0.0003
+  critic_lr: 0.001
+  gamma: 0.99
+  clip_ratio: 0.2
+  hidden_size: 64
+  entropy_beta: 0.01
+
+# SAC
+sac:
+  enabled: true
+  actor_lr: 0.0003
+  critic_lr: 0.001
+  alpha_lr: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  hidden_size: 256
+  target_entropy_scale: 1.0
+
+# Policy Gradient
+policy_gradient:
+  enabled: true
+  learning_rate: 0.001
+  gamma: 0.99
+  hidden_size: 64

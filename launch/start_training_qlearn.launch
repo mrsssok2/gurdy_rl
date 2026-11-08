@@ -1,0 +1,5 @@
+<launch>
+    <rosparam command="load" file="$(find my_gurdy_description)/config/gurdy_open_ai_params.yaml" />
+    <!-- Launch the training system -->
+    <node pkg="my_gurdy_description" name="gurdy_qlearn" type="start_training.py" output="screen"/>
+</launch>

@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Start the Gazebo simulation -->
+    <include file="$(find my_gurdy_description)/launch/spawn_gurdy.launch" />
+    
+    <!-- Wait for everything to initialize properly -->
+    <arg name="startup_delay" default="5.0" /> <!-- seconds -->
+    <node pkg="rospy" type="sleep" name="sleep" args="$(arg startup_delay)" />
+    
+    <!-- Start the metrics publisher node -->
+    <node pkg="my_gurdy_description" type="training_metrics_publisher.py" name="training_metrics_publisher" output="screen"/>
+    
+    <!-- Start the comparison visualizer -->
+    <node pkg="my_gurdy_description" type="comparison_visualizer.py" name="comparison_visualizer" output="screen"/>
+    
+    <!-- Launch all training nodes with sequential delays to avoid resource conflicts -->
+    
+    <!-- Q-learning (Original) -->
+    <node pkg="my_gurdy_description" type="start_training.py" name="gurdy_qlearn" output="screen">
+        <param name="algorithm_name" value="qlearn" />
+    </node>
+    
+    <!-- SARSA -->
+    <node pkg="my_gurdy_description" type="train_gurdy_sarsa.py" name="gurdy_sarsa" output="screen">
+        <param name="algorithm_name" value="sarsa" />
+    </node>
+    
+    <!-- DQN -->
+    <node pkg="my_gurdy_description" type="train_gurdy_dqn.py" name="gurdy_dqn" output="screen">
+        <param name="algorithm_name" value="dqn" />
+    </node>
+    
+    <!-- Policy Gradient -->
+    <node pkg="my_gurdy_description" type="train_gurdy_policy_gradient.py" name="gurdy_policy_gradient" output="screen">
+        <param name="algorithm_name" value="policy_gradient" />
+    </node>
+    
+    <!-- PPO -->
+    <node pkg="my_gurdy_description" type="train_gurdy_ppo.py" name="gurdy_ppo" output="screen">
+        <param name="algorithm_name" value="ppo" />
+    </node>
+    
+    <!-- SAC -->
+    <node pkg="my_gurdy_description" type="train_gurdy_sac.py" name="gurdy_sac" output="screen">
+        <param name="algorithm_name" value="sac" />
+    </node>
+</launch>

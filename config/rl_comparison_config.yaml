@@ -1,0 +1,128 @@
+# RL Algorithm Comparison Configuration
+
+# Environment configuration
+environment:
+  name: 'MyGurdyWalkEnv-v0'
+  state_size: 9
+  action_size: 7
+  max_steps: 200
+  reset_world_or_sim: "SIMULATION"
+  
+  # Robot physical parameters
+  robot:
+    joint_limits:
+      upper_leg:
+        min: -1.55
+        max: 0.0
+      lower_leg:
+        min: -2.9
+        max: 1.57
+    noise_level: 0.05
+    gravity: -9.81
+
+# Training configuration
+training:
+  episodes: 500
+  save_interval: 100
+  output_dir: "/home/user/catkin_ws/src/my_gurdy_description/output/comparison"
+  load_models: false  # Set to true to load pretrained models
+  parallel_training: true  # Train algorithms in parallel
+
+# Common parameters across algorithms
+common:
+  gamma: 0.99
+  batch_size: 64
+
+# Algorithm-specific parameters
+algorithms:
+  qlearn:
+    enabled: true
+    alpha: 0.2
+    epsilon: 0.9
+    epsilon_decay: 0.995
+    epsilon_min: 0.05
+    namespaced: true
+    namespace: "qlearn_gurdy"
+    description: "Standard Q-Learning (tabular)"
+    color: "blue"
+
+  sarsa:
+    enabled: true
+    alpha: 0.2
+    epsilon: 0.9
+    epsilon_decay: 0.995
+    epsilon_min: 0.05
+    namespaced: true
+    namespace: "sarsa_gurdy"
+    description: "SARSA: On-policy TD Learning"
+    color: "green"
+
+  dqn:
+    enabled: true
+    epsilon: 0.9
+    epsilon_decay: 0.995
+    epsilon_min: 0.05
+    learning_rate: 0.001
+    batch_size: 32
+    memory_size: 10000
+    target_update_freq: 10
+    namespaced: true
+    namespace: "dqn_gurdy"
+    description: "Deep Q-Network"
+    color: "red"
+
+  ppo:
+    enabled: true
+    actor_lr: 0.0003
+    critic_lr: 0.001
+    clip_ratio: 0.2
+    target_kl: 0.01
+    epochs: 10
+    lam: 0.95
+    batch_size: 64
+    update_interval: 2048
+    namespaced: true
+    namespace: "ppo_gurdy"
+    description: "Proximal Policy Optimization"
+    color: "purple"
+
+  sac:
+    enabled: true
+    alpha: 0.2
+    actor_lr: 0.0003
+    critic_lr: 0.0003
+    tau: 0.005
+    batch_size: 64
+    memory_size: 100000
+    auto_alpha: true
+    namespaced: true
+    namespace: "sac_gurdy"
+    description: "Soft Actor-Critic"
+    color: "orange"
+
+  pg:
+    enabled: true
+    learning_rate: 0.01
+    namespaced: true
+    namespace: "pg_gurdy"
+    description: "Policy Gradient (REINFORCE)"
+    color: "brown"
+
+# Visualization configuration
+visualization:
+  update_interval: 1.0  # Update interval in seconds
+  plot_rewards: true
+  plot_q_values: true
+  plot_stability: true
+  live_update: true
+  compare_algorithms: true
+  window_width: 1200
+  window_height: 800
+
+# Reward function parameters
+reward_function:
+  distance_multiplier: 10.0  # Multiplier for distance reward
+  speed_multiplier: 1.0      # Multiplier for speed reward
+  energy_penalty: 0.1        # Penalty for energy usage
+  fall_penalty: 5.0          # Penalty for falling
+  stability_bonus: 1.0       # Bonus for maintaining stability

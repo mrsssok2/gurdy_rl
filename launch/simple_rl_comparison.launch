@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Load the URDF and controllers (using existing launch file) -->
+    <include file="$(find my_gurdy_description)/launch/spawn_gurdy.launch"/>
+    
+    <!-- Wait 5 seconds for everything to load properly -->
+    <node pkg="topic_tools" type="relay" name="startup_delay" 
+          args="foo foo 5" launch-prefix="bash -c 'sleep 5; $0 $@'"/>
+    
+    <!-- Launch the training scripts directly with Python (not through ROS) -->
+    <node name="qlearn_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 start_training.py &amp; $0 $@'"/>
+          
+    <node name="sarsa_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 train_gurdy_sarsa.py &amp; $0 $@'"/>
+          
+    <node name="dqn_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 train_gurdy_dqn.py &amp; $0 $@'"/>
+          
+    <node name="pg_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 train_gurdy_policy_gradient.py &amp; $0 $@'"/>
+          
+    <node name="ppo_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 train_gurdy_ppo.py &amp; $0 $@'"/>
+          
+    <node name="sac_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 train_gurdy_sac.py &amp; $0 $@'"/>
+    
+    <!-- Now add the plotter (create a simple version if needed) -->
+    <node name="plotter_runner" pkg="topic_tools" type="relay"
+          args="foo foo" launch-prefix="bash -c 'cd $(find my_gurdy_description)/scripts && python3 -c &quot;
+import matplotlib
+matplotlib.use(\&quot;TkAgg\&quot;)
+import matplotlib.pyplot as plt
+import numpy as np
+import rospy
+from std_msgs.msg import Float32
+import time
+
+# Initialize node
+rospy.init_node(\&quot;rl_plotter\&quot;)
+
+# Set up figure
+plt.ion()
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.set_title(\&quot;RL Algorithm Comparison\&quot;)
+ax.set_xlabel(\&quot;Episode\&quot;)
+ax.set_ylabel(\&quot;Reward\&quot;)
+ax.grid(True)
+
+# Data storage
+algorithms = [\&quot;qlearn\&quot;, \&quot;sarsa\&quot;, \&quot;dqn\&quot;, \&quot;policy_gradient\&quot;, \&quot;ppo\&quot;, \&quot;sac\&quot;]
+colors = [\&quot;blue\&quot;, \&quot;green\&quot;, \&quot;red\&quot;, \&quot;purple\&quot;, \&quot;orange\&quot;, \&quot;cyan\&quot;]
+data = {algo: [] for algo in algorithms}
+lines = {}
+
+# Create lines for each algorithm
+for algo, color in zip(algorithms, colors):
+    line, = ax.plot([], [], color=color, label=algo)
+    lines[algo] = line
+
+ax.legend()
+plt.tight_layout()
+plt.show(block=False)
+
+# Create subscribers
+def reward_callback(msg, algo):
+    data[algo].append(msg.data)
+    x = list(range(len(data[algo])))
+    lines[algo].set_data(x, data[algo])
+    ax.relim()
+    ax.autoscale_view()
+    plt.draw()
+    plt.pause(0.001)
+
+subscribers = {}
+for algo in algorithms:
+    topic = f\&quot;/gurdy_{algo}/episode_reward\&quot;
+    subscribers[algo] = rospy.Subscriber(topic, Float32, reward_callback, callback_args=algo)
+
+# Keep alive
+while not rospy.is_shutdown():
+    plt.pause(0.1)
+    time.sleep(0.1)
+&quot; &amp; $0 $@'"/>
+</launch>

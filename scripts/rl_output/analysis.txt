@@ -1,0 +1,46 @@
+RL Algorithms Comparison Analysis
+================================
+
+QLEARN Performance:
+  Average reward (last 10 episodes): 21.60
+  Maximum reward achieved: 197.82
+  Final performance metric: 0.23
+  Average stability: 0.08
+
+SARSA Performance:
+  Average reward (last 10 episodes): 14.13
+  Maximum reward achieved: 78.10
+  Final performance metric: 0.19
+  Average stability: 0.01
+
+DQN Performance:
+  Average reward (last 10 episodes): 470.18
+  Maximum reward achieved: 512.71
+  Final performance metric: 4.99
+  Average stability: 0.02
+
+PPO Performance:
+  Average reward (last 10 episodes): 534.62
+  Maximum reward achieved: 573.35
+  Final performance metric: 2.53
+  Average stability: 0.04
+
+SAC Performance:
+  Average reward (last 10 episodes): 515.21
+  Maximum reward achieved: 550.74
+  Final performance metric: 3.93
+  Average stability: 0.02
+
+POLICY_GRADIENT Performance:
+  Average reward (last 10 episodes): 460.92
+  Maximum reward achieved: 482.25
+  Final performance metric: 0.59
+  Average stability: 0.03
+
+Algorithm Ranking (based on last 10 episodes):
+  1. ppo: 534.62
+  2. sac: 515.21
+  3. dqn: 470.18
+  4. policy_gradient: 460.92
+  5. qlearn: 21.60
+  6. sarsa: 14.13

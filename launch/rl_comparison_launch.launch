@@ -1,0 +1,155 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Arguments for different algorithm namespaces -->
+    <arg name="qlearn_ns" default="qlearn_gurdy" />
+    <arg name="sarsa_ns" default="sarsa_gurdy" />
+    <arg name="dqn_ns" default="dqn_gurdy" />
+    <arg name="pg_ns" default="pg_gurdy" />
+    <arg name="ppo_ns" default="ppo_gurdy" />
+    <arg name="sac_ns" default="sac_gurdy" />
+    
+    <!-- Start Gazebo with an empty world -->
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="use_sim_time" value="true" />
+        <arg name="debug" value="false" />
+        <arg name="gui" value="true" />
+        <arg name="paused" value="false" />
+    </include>
+    
+    <!-- Load the URDF into the ROS Parameter Server -->
+    <param name="robot_description" command="$(find xacro)/xacro $(find my_gurdy_description)/robot/gurdy.xacro" />
+    
+    <!-- Spawn robot models for each algorithm with different positions -->
+    <node name="qlearn_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x 0.0 -y -2.0 -z 0.18 -model $(arg qlearn_ns) -param robot_description -robot_namespace /$(arg qlearn_ns)" />
+        
+    <node name="sarsa_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x 2.0 -y -1.0 -z 0.18 -model $(arg sarsa_ns) -param robot_description -robot_namespace /$(arg sarsa_ns)" />
+        
+    <node name="dqn_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x 2.0 -y 1.0 -z 0.18 -model $(arg dqn_ns) -param robot_description -robot_namespace /$(arg dqn_ns)" />
+        
+    <node name="pg_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x 0.0 -y 2.0 -z 0.18 -model $(arg pg_ns) -param robot_description -robot_namespace /$(arg pg_ns)" />
+        
+    <node name="ppo_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x -2.0 -y 1.0 -z 0.18 -model $(arg ppo_ns) -param robot_description -robot_namespace /$(arg ppo_ns)" />
+        
+    <node name="sac_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x -2.0 -y -1.0 -z 0.18 -model $(arg sac_ns) -param robot_description -robot_namespace /$(arg sac_ns)" />
+
+    <!-- Load the controllers for each robot instance -->
+    <!-- Use inline controller spawning for each namespace -->
+    
+    <!-- QLearn robot controllers -->
+    <node name="qlearn_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" ns="/$(arg qlearn_ns)" args="
+        head_upperlegM1_joint_position_controller 
+        head_upperlegM2_joint_position_controller 
+        head_upperlegM3_joint_position_controller 
+        head_upperlegM4_joint_position_controller 
+        head_upperlegM5_joint_position_controller 
+        head_upperlegM6_joint_position_controller 
+        upperlegM1_lowerlegM1_joint_position_controller 
+        upperlegM2_lowerlegM2_joint_position_controller 
+        upperlegM3_lowerlegM3_joint_position_controller 
+        upperlegM4_lowerlegM4_joint_position_controller 
+        upperlegM5_lowerlegM5_joint_position_controller 
+        upperlegM6_lowerlegM6_joint_position_controller" />
+        
+    <!-- SARSA robot controllers -->
+    <node name="sarsa_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" ns="/$(arg sarsa_ns)" args="
+        head_upperlegM1_joint_position_controller 
+        head_upperlegM2_joint_position_controller 
+        head_upperlegM3_joint_position_controller 
+        head_upperlegM4_joint_position_controller 
+        head_upperlegM5_joint_position_controller 
+        head_upperlegM6_joint_position_controller 
+        upperlegM1_lowerlegM1_joint_position_controller 
+        upperlegM2_lowerlegM2_joint_position_controller 
+        upperlegM3_lowerlegM3_joint_position_controller 
+        upperlegM4_lowerlegM4_joint_position_controller 
+        upperlegM5_lowerlegM5_joint_position_controller 
+        upperlegM6_lowerlegM6_joint_position_controller" />
+        
+    <!-- DQN robot controllers -->
+    <node name="dqn_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" ns="/$(arg dqn_ns)" args="
+        head_upperlegM1_joint_position_controller 
+        head_upperlegM2_joint_position_controller 
+        head_upperlegM3_joint_position_controller 
+        head_upperlegM4_joint_position_controller 
+        head_upperlegM5_joint_position_controller 
+        head_upperlegM6_joint_position_controller 
+        upperlegM1_lowerlegM1_joint_position_controller 
+        upperlegM2_lowerlegM2_joint_position_controller 
+        upperlegM3_lowerlegM3_joint_position_controller 
+        upperlegM4_lowerlegM4_joint_position_controller 
+        upperlegM5_lowerlegM5_joint_position_controller 
+        upperlegM6_lowerlegM6_joint_position_controller" />
+        
+    <!-- Policy Gradient robot controllers -->
+    <node name="pg_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" ns="/$(arg pg_ns)" args="
+        head_upperlegM1_joint_position_controller 
+        head_upperlegM2_joint_position_controller 
+        head_upperlegM3_joint_position_controller 
+        head_upperlegM4_joint_position_controller 
+        head_upperlegM5_joint_position_controller 
+        head_upperlegM6_joint_position_controller 
+        upperlegM1_lowerlegM1_joint_position_controller 
+        upperlegM2_lowerlegM2_joint_position_controller 
+        upperlegM3_lowerlegM3_joint_position_controller 
+        upperlegM4_lowerlegM4_joint_position_controller 
+        upperlegM5_lowerlegM5_joint_position_controller 
+        upperlegM6_lowerlegM6_joint_position_controller" />
+        
+    <!-- PPO robot controllers -->
+    <node name="ppo_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" ns="/$(arg ppo_ns)" args="
+        head_upperlegM1_joint_position_controller 
+        head_upperlegM2_joint_position_controller 
+        head_upperlegM3_joint_position_controller 
+        head_upperlegM4_joint_position_controller 
+        head_upperlegM5_joint_position_controller 
+        head_upperlegM6_joint_position_controller 
+        upperlegM1_lowerlegM1_joint_position_controller 
+        upperlegM2_lowerlegM2_joint_position_controller 
+        upperlegM3_lowerlegM3_joint_position_controller 
+        upperlegM4_lowerlegM4_joint_position_controller 
+        upperlegM5_lowerlegM5_joint_position_controller 
+        upperlegM6_lowerlegM6_joint_position_controller" />
+        
+    <!-- SAC robot controllers -->
+    <node name="sac_controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+        output="screen" ns="/$(arg sac_ns)" args="
+        head_upperlegM1_joint_position_controller 
+        head_upperlegM2_joint_position_controller 
+        head_upperlegM3_joint_position_controller 
+        head_upperlegM4_joint_position_controller 
+        head_upperlegM5_joint_position_controller 
+        head_upperlegM6_joint_position_controller 
+        upperlegM1_lowerlegM1_joint_position_controller 
+        upperlegM2_lowerlegM2_joint_position_controller 
+        upperlegM3_lowerlegM3_joint_position_controller 
+        upperlegM4_lowerlegM4_joint_position_controller 
+        upperlegM5_lowerlegM5_joint_position_controller 
+        upperlegM6_lowerlegM6_joint_position_controller" />
+    
+    <!-- Wait for controllers to start properly -->
+    <arg name="startup_delay" default="3.0" /> <!-- seconds -->
+    <!-- Use the proper way to add delay in ROS launch files -->
+    <group>
+        <param name="startup_delay" value="$(arg startup_delay)" />
+        <!-- Just use a sleep command to create a delay -->
+        <node pkg="rostopic" type="rostopic" name="wait_node" 
+              args="echo -n 1 /rosout" launch-prefix="bash -c 'sleep $(arg startup_delay); $0 $@'" />
+    </group>
+    
+    <!-- Launch multi-algorithm comparison with visualization -->
+    <node pkg="my_gurdy_description" type="multi_rl_launch.py" name="multi_rl_launcher" output="screen" />
+
+    <!-- Setup RViz for visualization (optional) -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find my_gurdy_description)/config/gurdy_rl_comparison.rviz" />
+</launch>

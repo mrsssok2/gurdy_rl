@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Load the configuration parameters -->
+  <rosparam command="load" file="$(find my_gurdy_description)/config/algorithm_comparison.yaml" />
+
+  <!-- Launch the algorithm runner node -->
+  <node pkg="my_gurdy_description" type="run_all_algorithms.py" name="algorithm_runner" output="screen">
+    <param name="output_dir" value="/home/user/catkin_ws/src/my_gurdy_description/results" />
+    <param name="package_name" value="my_gurdy_description" />
+  </node>
+</launch>

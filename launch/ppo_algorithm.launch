@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Load the parameters for the PPO algorithm -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/params_ppo.yaml" />
+    
+    <!-- Launch the training node -->
+    <node pkg="my_gurdy_description" type="train_gurdy_ppo.py" name="gurdy_ppo" output="screen"/>
+</launch>

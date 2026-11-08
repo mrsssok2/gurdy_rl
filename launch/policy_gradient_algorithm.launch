@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Load the parameters for the Policy Gradient algorithm -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/params_policy_gradient.yaml" />
+    
+    <!-- Launch the training node -->
+    <node pkg="my_gurdy_description" type="train_gurdy_policy_gradient.py" name="gurdy_policy_gradient" output="screen"/>
+</launch>

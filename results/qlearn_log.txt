@@ -1,0 +1,87 @@
+Starting qlearn training
+signal_shutdown hook error[cannot join current thread]
+[WARN] [1743221381.412478, 140.739000]: Controller Spawner couldn't find the expected controller_manager ROS interface.
+shutdown request: [/gurdy/position_controller_spawner] Reason: new node registered with same name
+[INFO] [1743221381.375146, 0.000000]: Controller Spawner: Waiting for service controller_manager/load_controller
+[INFO] [1743221381.391584, 140.733000]: Controller Spawner: Waiting for service controller_manager/switch_controller
+signal_shutdown hook error[cannot join current thread]
+[INFO] [1743221383.707597, 141.515000]: Joint states ready
+[INFO] [1743221383.883821, 141.607000]: Odometry ready
+[INFO] [1743221384.001308, 141.681000]: Model states ready
+[INFO] [1743221384.004288, 141.684000]: All sensors are ready
+[INFO] [1743221384.480243, 141.898000]: Waiting for subscribers to joint position controllers...
+shutdown request: [/gurdy_qlearn] Reason: new node registered with same name
+[31mERROR: cannot launch node of type [rospy/sleep]: Cannot locate node of type [sleep] in package [rospy]. Make sure file exists in package path and permission is set to executable (chmod +x)[0m
+... logging to /home/user/.ros/log/0d9541ac-0c53-11f0-b5dd-0242ac160006/roslaunch-2_xterm-18284.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/home/user/catkin_ws/src/my_gurdy_description/launch/train_gurdy.launch
+[1mstarted roslaunch server http://2_xterm:46283/[0m
+
+SUMMARY
+========
+
+PARAMETERS
+ * /gurdy/alpha: 0.15
+ * /gurdy/controllers/joint_controller_list: ['head_upperlegM1...
+ * /gurdy/controllers/joint_increment: 0.1
+ * /gurdy/distance_states/far: 5.0
+ * /gurdy/distance_states/near: 1.0
+ * /gurdy/environment/energy_penalty_multiplier: 0.1
+ * /gurdy/environment/goal_distance: 5.0
+ * /gurdy/environment/init_joint_pose/joint1: 0.0
+ * /gurdy/environment/init_joint_pose/joint2: 0.0
+ * /gurdy/environment/init_joint_pose/joint3: 0.0
+ * /gurdy/environment/init_joint_pose/joint4: 0.0
+ * /gurdy/environment/init_joint_pose/joint5: 0.0
+ * /gurdy/environment/init_joint_pose/joint6: 0.0
+ * /gurdy/environment/max_episode_steps: 200
+ * /gurdy/environment/max_joint_limit: 0.9
+ * /gurdy/environment/min_distance: 0.1
+ * /gurdy/environment/reward_distance_multiplier: 10.0
+ * /gurdy/environment/reward_speed_multiplier: 1.0
+ * /gurdy/environment/running_step: 0.1
+ * /gurdy/environment/wait_time: 0.1
+ * /gurdy/epsilon: 0.9
+ * /gurdy/epsilon_discount: 0.995
+ * /gurdy/gamma: 0.95
+ * /gurdy/joint_states/high: 0.3
+ * /gurdy/joint_states/low: -0.3
+ * /gurdy/load_model_path: 
+ * /gurdy/log_freq: 1
+ * /gurdy/min_epsilon: 0.05
+ * /gurdy/nepisodes: 20
+ * /gurdy/nsteps: 200
+ * /gurdy/outdir: /home/user/catkin...
+ * /gurdy/robot/gravity: -9.81
+ * /gurdy/robot/joint_limits/lower_leg/max: 1.57
+ * /gurdy/robot/joint_limits/lower_leg/min: -2.9
+ * /gurdy/robot/joint_limits/upper_leg/max: 0.0
+ * /gurdy/robot/joint_limits/upper_leg/min: -1.55
+ * /gurdy/robot/noise_level: 0.05
+ * /gurdy/save_model_freq: 100
+ * /gurdy/speed_states/fast: 0.5
+ * /gurdy/speed_states/slow: 0.1
+ * /rosdistro: noetic
+ * /rosversion: 1.15.11
+
+NODES
+  /
+    gurdy_qlearn (my_gurdy_description/start_training.py)
+    sleep (rospy/sleep)
+  /gurdy/
+    position_controller_spawner (controller_manager/spawner)
+
+[1mROS_MASTER_URI=http://2_xterm:11311[0m
+]2;/home/user/catkin_ws/src/my_gurdy_description/launch/train_gurdy.launch http://2_xterm:11311
+[1mprocess[gurdy/position_controller_spawner-1]: started with pid [18469][0m
+[1mprocess[gurdy_qlearn-3]: started with pid [18471][0m
+[1m[gurdy/position_controller_spawner-1] process has finished cleanly
+log file: /home/user/.ros/log/0d9541ac-0c53-11f0-b5dd-0242ac160006/gurdy-position_controller_spawner-1*.log[0m
+[1m[gurdy_qlearn-3] process has finished cleanly
+log file: /home/user/.ros/log/0d9541ac-0c53-11f0-b5dd-0242ac160006/gurdy_qlearn-3*.log[0m
+all processes on machine have died, roslaunch will exit
+shutting down processing monitor...
+... shutting down processing monitor complete
+[1mdone[0m

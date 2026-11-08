@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Launch the RL Comparison Plotter node -->
+  <node pkg="my_gurdy_description" type="rl_comparison_plotter.py" name="rl_comparison_plotter" output="screen">
+    <param name="config_file" value="$(find my_gurdy_description)/config/plotter_config.yaml" />
+  </node>
+  
+  <!-- Note: This launch file assumes that the RL algorithms are launched separately -->
+</launch>

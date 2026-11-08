@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Define parameters for each algorithm -->
+  <arg name="nepisodes" default="20" />
+  <arg name="log_dir" default="$(find my_gurdy_description)/output/comparison" />
+  <arg name="startup_delay" default="2.0" /> <!-- seconds -->
+  
+  <!-- Start Gazebo with an empty world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="use_sim_time" value="true" />
+  </include>
+  
+  <!-- Load the URDF into the ROS Parameter Server -->
+  <param name="robot_description" command="$(find xacro)/xacro $(find my_gurdy_description)/robot/gurdy.xacro" />
+  
+  <!-- Run a python script to send a service call to spawn the model -->
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-urdf -x 0.5 -y 0.0 -z 0.18 -model gurdy -param robot_description" />
+  
+  <!-- Load controller configuration -->
+  <rosparam file="$(find my_gurdy_description)/config/gurdy_control.yaml" command="load"/>
+  
+  <!-- Start the controller manager -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false"
+    output="screen" ns="/gurdy" args="joint_state_controller
+                                   head_upperlegM1_joint_position_controller 
+                                   head_upperlegM2_joint_position_controller 
+                                   head_upperlegM3_joint_position_controller 
+                                   head_upperlegM4_joint_position_controller 
+                                   head_upperlegM5_joint_position_controller 
+                                   head_upperlegM6_joint_position_controller 
+                                   upperlegM1_lowerlegM1_joint_position_controller 
+                                   upperlegM2_lowerlegM2_joint_position_controller 
+                                   upperlegM3_lowerlegM3_joint_position_controller 
+                                   upperlegM4_lowerlegM4_joint_position_controller 
+                                   upperlegM5_lowerlegM5_joint_position_controller 
+                                   upperlegM6_lowerlegM6_joint_position_controller"/>
+                                   
+  <!-- Wait for controllers to start properly -->
+  <node pkg="rospy" type="sleep" name="sleep" args="$(arg startup_delay)" />
+  
+  <!-- Load the combined parameters for all algorithms -->
+  <rosparam command="load" file="$(find my_gurdy_description)/config/combined_rl_params.yaml" />
+  
+  <!-- Override the number of episodes and output directory -->
+  <param name="/gurdy/nepisodes" value="$(arg nepisodes)" />
+  <param name="/gurdy/outdir" value="$(arg log_dir)" />
+  
+  <!-- Launch all training nodes with all 6 algorithms -->
+  <node pkg="my_gurdy_description" type="start_training.py" name="gurdy_qlearn" output="screen">
+    <param name="algo_name" value="qlearn" />
+    <param name="output_dir" value="$(arg log_dir)/qlearn" />
+  </node>
+  
+  <node pkg="my_gurdy_description" type="train_gurdy_sarsa.py" name="gurdy_sarsa" output="screen">
+    <param name="algo_name" value="sarsa" />
+    <param name="output_dir" value="$(arg log_dir)/sarsa" />
+  </node>
+  
+  <node pkg="my_gurdy_description" type="train_gurdy_dqn.py" name="gurdy_dqn" output="screen">
+    <param name="algo_name" value="dqn" />
+    <param name="output_dir" value="$(arg log_dir)/dqn" />
+  </node>
+  
+  <node pkg="my_gurdy_description" type="train_gurdy_policy_gradient.py" name="gurdy_policy_gradient" output="screen">
+    <param name="algo_name" value="pg" />
+    <param name="output_dir" value="$(arg log_dir)/pg" />
+  </node>
+  
+  <node pkg="my_gurdy_description" type="train_gurdy_ppo.py" name="gurdy_ppo" output="screen">
+    <param name="algo_name" value="ppo" />
+    <param name="output_dir" value="$(arg log_dir)/ppo" />
+  </node>
+  
+  <node pkg="my_gurdy_description" type="train_gurdy_sac.py" name="gurdy_sac" output="screen">
+    <param name="algo_name" value="sac" />
+    <param name="output_dir" value="$(arg log_dir)/sac" />
+  </node>
+  
+  <!-- Launch the comparison script -->
+  <node pkg="my_gurdy_description" type="rl_comparison.py" name="rl_comparison" output="screen">
+    <param name="log_dir" value="$(arg log_dir)" />
+    <param name="update_interval" value="2.0" />
+  </node>
+</launch>

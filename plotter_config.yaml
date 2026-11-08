@@ -1,0 +1,28 @@
+# Configuration for RL Comparison Plotter
+
+# List of algorithms to compare
+algorithms:
+  - DQN
+  - PolicyGradient
+  - PPO
+  - SAC
+  - SARSA
+  - QLearn
+
+# Topic prefixes for each algorithm
+topic_prefixes:
+  DQN: '/gurdy/dqn'
+  PolicyGradient: '/gurdy/policy_gradient'
+  PPO: '/gurdy/ppo'
+  SAC: '/gurdy/sac'
+  SARSA: '/gurdy/sarsa'
+  QLearn: '/gurdy/qlearn'
+
+# Colors for plotting each algorithm
+colors:
+  DQN: 'b'          # blue
+  PolicyGradient: 'g'  # green
+  PPO: 'r'          # red
+  SAC: 'm'          # magenta
+  SARSA: 'c'         # cyan
+  QLearn: 'y'        # yellow

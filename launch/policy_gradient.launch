@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Start the position controllers first -->
+    <include file="$(find my_gurdy_description)/launch/start_controllers.launch" />
+    
+    <!-- Wait for controllers to start properly -->
+    <arg name="startup_delay" default="2.0" /> <!-- seconds -->
+    <node pkg="rospy" type="sleep" name="sleep" args="$(arg startup_delay)" />
+    
+    <!-- Load the parameters for the Policy Gradient algorithm -->
+    <rosparam command="load" file="$(find my_gurdy_description)/config/params_policy_gradient.yaml" />
+    
+    <!-- Launch the training node -->
+    <node pkg="my_gurdy_description" type="train_gurdy_policy_gradient.py" name="gurdy_policy_gradient" output="screen"/>
+</launch>
