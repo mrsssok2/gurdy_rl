@@ -322,7 +322,7 @@ def main():
     epsilon = rospy.get_param("/gurdy/epsilon", 0.9)
     epsilon_min = rospy.get_param("/gurdy/min_epsilon", 0.05)
     epsilon_decay = rospy.get_param("/gurdy/epsilon_discount", 0.995)
-    gamma = rospy.get_param("/gurdy/gamma", 0.95)
+    gamma = rospy.get_param("/gurdy/gamma", 0.99)
     learning_rate = rospy.get_param("/gurdy/learning_rate", 0.001)
     batch_size = rospy.get_param("/gurdy/batch_size", 32)
     

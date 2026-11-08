@@ -40,7 +40,7 @@ gurdy:
   epsilon: 0.9         # Initial exploration rate
   epsilon_discount: 0.995  # Exploration rate decay
   min_epsilon: 0.05    # Minimum exploration rate
-  gamma: 0.95          # Discount factor
+  gamma: 0.99          # Discount factor (looks ~100 steps ahead, several gait cycles)
   learning_rate: 0.001  # Learning rate for optimizer
   batch_size: 32       # Batch size for training
   memory_size: 10000   # Size of replay memory
