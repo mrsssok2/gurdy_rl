@@ -44,14 +44,14 @@ def extract_state_features(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [group state flags (6), forward_velocity, forward_distance, head_height]
+                                [leg pose codes (6), forward_velocity, forward_distance, head_height]
     
     Returns:
         np.array: Feature array for PPO
     """
     # We'll use numeric values directly for PPO
-    # Group target-state flags (extended, retracted) for FRONT, BACK, SIDE
-    group_flags = np.asarray(observations[0:6], dtype=np.float32)
+    # Target pose code of each leg 1-6, in [0, 1] (see env.OBS_LEG_CODES)
+    leg_codes = np.asarray(observations[0:6], dtype=np.float32)
     
     # Extract signed forward velocity, signed forward distance, and height
     linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
@@ -65,7 +65,7 @@ def extract_state_features(observations):
     
     # Combine features
     return np.concatenate([
-        group_flags,  # already 0/1
+        leg_codes,  # already in [0, 1]
         normalized_speed, 
         normalized_distance, 
         normalized_height
@@ -225,8 +225,8 @@ def main():
     save_model_freq = rospy.get_param("/gurdy/save_model_freq", 100)
     
     # Set state and action sizes
-    # Using observation directly: 6 joint angles + speed + distance + height = 9 features
-    state_size = 9  # Using direct observations
+    # Using observation directly: 6 leg pose codes + speed + distance + height = 9 features
+    state_size = env.observation_space.shape[0]  # Using direct observations (9)
     action_size = env.action_space.n
     
     # Create PPO agent

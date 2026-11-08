@@ -51,19 +51,18 @@ from sensor_msgs.msg import JointState
 import env as gurdy_env
 
 
-def action_index(group, move):
-    """Index in env.ACTIONS of the action that applies move to group."""
-    return gurdy_env.ACTIONS.index((group, move))
-
-
 def stroke(group, push):
     """
-    Actions for one stroke of group whose planted feet move `push`
-    (REACH_OUT or REACH_IN): lift, reach the other way, lower, push.
+    (leg, move) list for one stroke of each leg of group in turn, whose
+    planted foot moves `push` (REACH_OUT or REACH_IN): lift, reach the other
+    way, lower, push.
     """
     back = gurdy_env.REACH_IN if push == gurdy_env.REACH_OUT else gurdy_env.REACH_OUT
-    return [(group, gurdy_env.LIFT), (group, back),
-            (group, gurdy_env.LOWER), (group, push)]
+    moves = []
+    for leg in gurdy_env.GROUP_LEGS[group]:
+        moves += [(leg, gurdy_env.LIFT), (leg, back),
+                  (leg, gurdy_env.LOWER), (leg, push)]
+    return moves
 
 
 def gait(mirror, alternate):
@@ -100,9 +99,9 @@ def main():
         parser.error("give the number of cycles to run (or --poses)")
 
     moves, expected = gait(args.mirror, args.alternate)
-    cycle_actions = [action_index(group, move) for group, move in moves]
+    cycle_actions = [gurdy_env.action_index(leg, move) for leg, move in moves]
     print("Gait cycle (expect %s): %s" % (
-        expected, ", ".join("%s %s" % gm for gm in moves)))
+        expected, ", ".join("leg %d %s" % lm for lm in moves)))
 
     rospy.init_node("gurdy_test_gait", anonymous=True)
     walk = gym.make("MyGurdyWalkEnv-v0").unwrapped
@@ -118,13 +117,9 @@ def main():
     rospy.Subscriber("/gurdy/joint_states", JointState, on_joints)
 
     def joint_targets():
-        """{joint: target angle} for the env's current group foot poses."""
-        hips, knees = [0.0] * 6, [0.0] * 6
-        for group, legs in gurdy_env.GROUP_LEGS.items():
-            hip, knee = gurdy_env.POSE_ANGLES[walk.group_states[group]]
-            for leg in legs:
-                hips[leg - 1], knees[leg - 1] = hip, knee
-        return dict(zip(walk.all_joint_names, hips + knees))
+        """{joint: target angle} for the env's current leg foot poses."""
+        return dict(zip(walk.all_joint_names,
+                        gurdy_env.leg_joint_targets(walk.leg_states)))
 
     def tracking_error(targets):
         """
@@ -147,13 +142,14 @@ def main():
         if args.hold > 0:
             rospy.sleep(args.hold)
         recording[0] = False
-        group, move = gurdy_env.ACTIONS[action]
+        leg, move = gurdy_env.ACTIONS[action]
+        label = "leg %d" % leg if leg is not None else "all"
         error = tracking_error(joint_targets())
         if error is None:
-            print("  %-6s %-9s no joint_states received" % (group, move))
+            print("  %-6s %-9s no joint_states received" % (label, move))
         else:
             print("  %-6s %-9s tracking error max %.3f rad (%s)  end %.3f rad (%s)"
-                  % ((group, move) + error))
+                  % ((label, move) + error))
         return info["fallen"], info["fall_reason"], done
 
     def report(label, previous):

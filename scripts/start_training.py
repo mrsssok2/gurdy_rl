@@ -52,25 +52,29 @@ def convert_obs_to_state(observations, reference_height):
     
     Args:
         observations (np.array): Array of observations 
-                                [group state flags (6), forward_velocity, forward_distance, head_height]
+                                [leg pose codes (6), forward_velocity, forward_distance, head_height]
         reference_height (float): Settled head height after the last reset;
                                   height buckets are relative to it
     
     Returns:
         str: State string representation
     """
-    # Current foot pose of each leg group: GROUND_IN, GROUND_OUT, LIFT_IN or
-    # LIFT_OUT for FRONT, BACK and SIDE (see env.ACTIONS)
-    front_state, back_state, side_state = env.group_states_from_obs(observations)
+    # Current foot pose of each leg 1-6: GROUND_IN, GROUND_OUT, LIFT_IN or
+    # LIFT_OUT (see env.ACTIONS)
+    leg_states = env.leg_states_from_obs(observations)
     
     # Extract signed forward velocity, signed forward distance, and height
     linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
     distance = observations[7]      # Forward (x) distance from start, negative = behind
     head_height = observations[8]
     
-    # The group poses identify the robot's pose exactly, since each action
-    # sets one group's pose
-    joint_pattern = "F-%s_B-%s_S-%s" % (front_state, back_state, side_state)
+    # The leg poses identify the robot's pose exactly, since each action
+    # sets one leg's pose. Each leg is lifted/grounded (L/G) x in/out (I/O),
+    # e.g. "1GO_2GO_3GO_4LI_5GO_6GO"
+    joint_pattern = "_".join(
+        "%d%s%s" % (leg, "L" if env.POSE_FLAGS[pose][0] else "G",
+                    "O" if env.POSE_FLAGS[pose][1] else "I")
+        for leg, pose in zip(env.LEGS, leg_states))
     
     # Discretize signed forward velocity
     if linear_speed < -0.05:

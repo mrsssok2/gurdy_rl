@@ -51,14 +51,14 @@ def extract_state_features(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [group state flags (6), forward_velocity, forward_distance, head_height]
+                                [leg pose codes (6), forward_velocity, forward_distance, head_height]
     
     Returns:
         np.array: Feature array for DQN
     """
     # We'll use numeric values directly for DQN
-    # Group target-state flags (extended, retracted) for FRONT, BACK, SIDE
-    group_flags = np.asarray(observations[0:6], dtype=np.float32)
+    # Target pose code of each leg 1-6, in [0, 1] (see env.OBS_LEG_CODES)
+    leg_codes = np.asarray(observations[0:6], dtype=np.float32)
     
     # Extract signed forward velocity, signed forward distance, and height
     linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
@@ -72,7 +72,7 @@ def extract_state_features(observations):
     
     # Combine features
     return np.concatenate([
-        group_flags,  # already 0/1
+        leg_codes,  # already in [0, 1]
         normalized_speed, 
         normalized_distance, 
         normalized_height
@@ -85,23 +85,27 @@ def convert_obs_to_state(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [group state flags (6), forward_velocity, forward_distance, head_height]
+                                [leg pose codes (6), forward_velocity, forward_distance, head_height]
     
     Returns:
         str: State string representation (for logging and visualization)
     """
-    # Current foot pose of each leg group: GROUND_IN, GROUND_OUT, LIFT_IN or
-    # LIFT_OUT for FRONT, BACK and SIDE (see env.ACTIONS)
-    front_state, back_state, side_state = env.group_states_from_obs(observations)
+    # Current foot pose of each leg 1-6: GROUND_IN, GROUND_OUT, LIFT_IN or
+    # LIFT_OUT (see env.ACTIONS)
+    leg_states = env.leg_states_from_obs(observations)
     
     # Extract signed forward velocity, signed forward distance, and height
     linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
     distance = observations[7]      # Forward (x) distance from start, negative = behind
     head_height = observations[8]
     
-    # The group poses identify the robot's pose exactly, since each action
-    # sets one group's pose
-    joint_pattern = "F-%s_B-%s_S-%s" % (front_state, back_state, side_state)
+    # The leg poses identify the robot's pose exactly, since each action
+    # sets one leg's pose. Each leg is lifted/grounded (L/G) x in/out (I/O),
+    # e.g. "1GO_2GO_3GO_4LI_5GO_6GO"
+    joint_pattern = "_".join(
+        "%d%s%s" % (leg, "L" if env.POSE_FLAGS[pose][0] else "G",
+                    "O" if env.POSE_FLAGS[pose][1] else "I")
+        for leg, pose in zip(env.LEGS, leg_states))
     
     # Discretize signed forward velocity
     if linear_speed < -0.05:
@@ -314,8 +318,8 @@ def main():
     save_model_freq = rospy.get_param("/gurdy/save_model_freq", 100)
     
     # Set state and action sizes
-    # Using observation directly: 6 joint angles + speed + distance + height = 9 features
-    state_size = 9  # Using direct observations
+    # Using observation directly: 6 leg pose codes + speed + distance + height = 9 features
+    state_size = env.observation_space.shape[0]  # Using direct observations (9)
     action_size = env.action_space.n
     
     # Create DQN agent
