@@ -8,6 +8,17 @@
     <xacro:property name="foot_mu2" value="10.0"/>
     <xacro:property name="foot_radius" value="0.008"/>
 
+    <!-- Joint limits. Total mass is ~0.191 kg (head 0.01, camera 0.001,
+         6 x (upper 0.01 + lower 0.01 + foot 0.01)), i.e. ~1.87 N of weight.
+         Worst-case static torque, one leg holding the whole robot at full
+         0.12 m reach: 1.87 N * 0.12 m = ~0.22 N*m (hip), ~0.11 N*m (knee,
+         0.06 m reach). With three feet down it is about a third of that.
+         0.3 N*m covers the worst case with margin; the old 1.0 N*m was ~4.5x
+         it, so six legs saturating together could throw the robot. -->
+    <xacro:property name="joint_effort" value="0.3"/>
+    <!-- rad/s. 0.005 rad/s would need ~5 min for a 1.5 rad stroke. -->
+    <xacro:property name="joint_velocity" value="5.0"/>
+
     <gazebo>
     <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
         <bodyName>base_link</bodyName>
@@ -203,7 +214,7 @@
             <parent link="upperleg_M${number}_link"/>
             <child link="lowerleg_M${number}_link"/>
             <origin xyz="0 0.0095 0.06" rpy="0 0 3.14159"/>
-            <limit lower="-2.9" upper="1.5708" effort="1.0" velocity="0.005"/>
+            <limit lower="-2.9" upper="1.5708" effort="${joint_effort}" velocity="${joint_velocity}"/>
             <axis xyz="0 1 0"/>
         </joint>
     </xacro:macro>
@@ -276,7 +287,7 @@
             <parent link="${headlink_name}"/>
             <child link="upperleg_M${number}_link"/>
             <xacro:insert_block name="origin" />
-            <limit lower="-1.55" upper="0.0" effort="1.0" velocity="0.005"/>
+            <limit lower="-1.55" upper="0.0" effort="${joint_effort}" velocity="${joint_velocity}"/>
             <axis xyz="0 1 0"/>
         </joint>
         
