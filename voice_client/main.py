@@ -34,7 +34,7 @@ import requests
 import command_parser
 import replies
 from robot_link import (DEFAULT_CONTAINER, DEFAULT_ECHO_DELAY, DEFAULT_SETUP,
-                        RobotLink, walk_timeout)
+                        SIDE_WALK_SPEED, RobotLink, walk_timeout)
 
 try:
     import msvcrt  # Windows: listen for Enter while the robot walks
@@ -49,6 +49,8 @@ RETRY_DELAYS = (1.0, 2.0, 4.0)  # after a 429 (one request at a time per account
 
 # Seconds to wait for a non-walk reply; walks use robot_link.walk_timeout
 REPLY_TIMEOUT = 20.0
+
+WALK_INTENTS = ("walk_forward", "walk_left", "walk_right")
 
 
 def banner(stage, text=""):
@@ -129,11 +131,16 @@ def play_wav(wav_bytes):
 
 
 def make_command(parsed, mode):
-    """voice_command JSON dict for a parsed walk/stop/status, else None."""
+    """
+    voice_command JSON dict for a parsed walk/stop/status, else None.
+    Sideways walks carry no mode: they are always scripted.
+    """
     intent = parsed["intent"]
     cmd = {"id": uuid.uuid4().hex[:8]}
     if intent == "walk_forward":
         cmd.update(action="walk_forward", distance_m=parsed["distance_m"], mode=mode)
+    elif intent in ("walk_left", "walk_right"):
+        cmd.update(action=intent, distance_m=parsed["distance_m"])
     elif intent in ("stop", "status"):
         cmd["action"] = intent
     else:
@@ -206,10 +213,15 @@ class VoiceDemo(object):
             self.robot.publish(transcript=transcript)
         else:
             banner("COMMAND", cmd)
-            walking = cmd["action"] == "walk_forward"
+            walking = cmd["action"] in WALK_INTENTS
             if walking and msvcrt is not None:
                 print("[ROBOT] walking... press Enter to speak a stop", flush=True)
-            timeout = walk_timeout(cmd["distance_m"]) if walking else REPLY_TIMEOUT
+            if not walking:
+                timeout = REPLY_TIMEOUT
+            elif cmd["action"] == "walk_forward":
+                timeout = walk_timeout(cmd["distance_m"])
+            else:
+                timeout = walk_timeout(cmd["distance_m"], speed=SIDE_WALK_SPEED)
             feedback = self.robot.send_and_wait(
                 cmd, transcript=transcript, timeout=timeout,
                 poll=self.poll_for_stop if walking else None)
@@ -217,11 +229,11 @@ class VoiceDemo(object):
             if outcome == "cancelled":
                 parsed = {"intent": "reset"}
             elif feedback is None and walking and outcome == "timeout":
-                parsed, feedback = self.after_walk_timeout(parsed, timeout)
+                parsed, feedback = self.after_walk_timeout(parsed, timeout, cmd["action"])
             banner("ROBOT", feedback if feedback is not None else "no reply (%s)" % outcome)
         self.say(replies.build_reply(parsed, feedback, self.mode))
 
-    def after_walk_timeout(self, parsed, timeout):
+    def after_walk_timeout(self, parsed, timeout, action="walk_forward"):
         """
         No walk result within timeout: ask the robot for its status. Returns
         (parsed, feedback) for the reply. If the robot is idle, its last
@@ -236,7 +248,7 @@ class VoiceDemo(object):
             return parsed, status
         last = status.get("last_result")
         if status.get("status") == "idle" and isinstance(last, dict):
-            return parsed, dict(last, action="walk_forward", from_status=True)
+            return parsed, dict(last, action=last.get("action", action), from_status=True)
         return {"intent": "status"}, status
 
     def run(self):

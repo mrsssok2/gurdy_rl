@@ -80,6 +80,15 @@ the joint tracking error after every action. It ignores the env's own episode
 end (stuck, goal, step limit) and stops only on a fall or after N cycles.
 `test_gait.py --poses` prints the foot poses and their IK joint angles.
 
+Gurdy's feet move only along their radial spokes, so it cannot turn, but it
+can step sideways. `test_gait.py 10 --left` walks toward +y: leg 6 (270°)
+pushes OUT, leg 3 (90°) pulls IN, then the diagonal pairs 1 OUT / 4 IN and
+2 OUT / 5 IN, whose x components cancel. That is 24 env steps per cycle.
+`--right` mirrors it across the x axis toward -y. For these the script reports
+the sideways distance (world y) and the x drift. The side-step gait has not
+been measured in Gazebo yet; `voice_walk.SIDE_M_PER_STEP` is an estimate
+(about 1.3 mm per step) until it is.
+
 ## Evaluating DQN checkpoints
 
 `evaluate.py` runs saved DQN models greedily (epsilon 0) through the same walk env
@@ -124,6 +133,8 @@ Commands (the wake word "Gurdy" is optional):
 | Say | Does |
 |-----|------|
 | "Gurdy, aage bees centimeter chalo" / "गरदी आगे बीस सेंटीमीटर चलो" | Walk 20 cm forward. Default 20 cm, at most 50 cm. Number words (das, bees, tees, pachaas, ...), digits and metres work too |
+| "Gurdy, baayen bees centimeter chalo" / "गरदी बाएं बीस सेंटीमीटर चलो" | Step 20 cm left (+y) with the scripted side-step gait (no RL). Same distances and 50 cm cap |
+| "daayen tees cm chalo" / "दाएँ तीस सेंटीमीटर चलो" | Step 30 cm right (-y) |
 | "ruko" / "रुक जाओ" / "stop" | Stop the walk. While Gurdy walks, press Enter first to speak |
 | "kitna chala" / "कितना चला" / "status" | Total distance walked, and whether Gurdy is walking |
 | "RL mode" / "आर एल मोड" | Walk with the trained DQN policy |
@@ -132,6 +143,10 @@ Commands (the wake word "Gurdy" is optional):
 In RL mode the node acts greedily with the DQN model. If the policy makes less
 than 5 mm of progress over 32 steps, or no model is loaded, the node switches
 to the scripted gait for the rest of the walk, and the reply says so.
+
+A sentence with a direction Gurdy cannot walk (peeche / back, upar, neeche),
+a turn (mudo, ghoomo, turn), or two directions ("aage baayen") is not
+understood rather than treated as a forward walk; the reply lists what works.
 
 In terminal 1 (container), start Gazebo:
 

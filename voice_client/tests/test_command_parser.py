@@ -102,6 +102,71 @@ class OtherIntentTest(unittest.TestCase):
         self.assertEqual(parse("रुको।")["text"], "रुको।")
 
 
+class SidewaysTest(unittest.TestCase):
+    def assertSide(self, text, intent, cm, defaulted=False, capped=False):
+        result = parse(text)
+        self.assertEqual(result["intent"], intent, (text, result))
+        self.assertAlmostEqual(result["distance_cm"], cm, msg=text)
+        self.assertAlmostEqual(result["distance_m"], cm / 100.0, msg=text)
+        self.assertEqual((result["defaulted"], result["capped"]), (defaulted, capped), text)
+        return result
+
+    def test_left_words(self):
+        for word in ("बाएं", "बाएँ", "baayen", "left", "Left"):
+            self.assertSide("Gurdy %s bees centimeter chalo" % word, "walk_left", 20)
+
+    def test_right_words(self):
+        for word in ("दाएं", "दाएँ", "दायें", "daayen", "right"):
+            self.assertSide("गरदी %s तीस सेंटीमीटर चलो।" % word, "walk_right", 30)
+
+    def test_devanagari_sentence(self):
+        result = self.assertSide("गरदी बाएं बीस सेंटीमीटर चलो।", "walk_left", 20)
+        self.assertTrue(result["wake_word"])
+
+    def test_distance_parsing_and_cap(self):
+        self.assertSide("baayen twenty five cm chalo", "walk_left", 25)
+        self.assertSide("दाएँ २० सेमी", "walk_right", 20)
+        self.assertSide("daayen ek meter chalo", "walk_right", 50, capped=True)
+        self.assertSide("baayen 0.3 m", "walk_left", 30)
+        self.assertSide("baayen chalo", "walk_left", 20, defaulted=True)
+        self.assertSide("right", "walk_right", 20, defaulted=True)
+
+    def test_stop_and_status_win(self):
+        self.assertEqual(parse("ruko, baayen mat jao")["intent"], "stop")
+        self.assertEqual(parse("kitna baayen chala")["intent"], "status")
+
+
+class UnsupportedDirectionTest(unittest.TestCase):
+    def assertUnknown(self, text, word):
+        result = parse(text)
+        self.assertEqual(result["intent"], "unknown", (text, result))
+        self.assertEqual(result["unsupported"], word, text)
+
+    def test_back_is_not_forward(self):
+        self.assertUnknown("Gurdy peeche bees cm chalo", "peeche")
+        self.assertUnknown("पीछे बीस सेंटीमीटर चलो", "पीछे")
+        self.assertUnknown("go back twenty cm", "back")
+
+    def test_turns(self):
+        self.assertUnknown("baayen mudo", "mudo")
+        self.assertUnknown("turn right", "turn")
+        self.assertUnknown("गरदी घूमो", "घूमो")
+
+    def test_up_down(self):
+        self.assertUnknown("upar chalo", "upar")
+        self.assertUnknown("neeche jao bees cm", "neeche")
+
+    def test_two_directions(self):
+        self.assertUnknown("aage baayen chalo", "aage baayen")
+        self.assertUnknown("left right", "left right")
+
+    def test_plain_unknown_has_no_unsupported(self):
+        self.assertNotIn("unsupported", parse("namaste"))
+
+    def test_forward_without_direction_still_works(self):
+        self.assertEqual(parse("bees cm chalo")["intent"], "walk_forward")
+
+
 class TokenizeTest(unittest.TestCase):
     def test_keeps_vowel_signs(self):
         self.assertEqual(tokenize("गरदी आगे बीस सेंटीमीटर चलो।"),

@@ -4,6 +4,7 @@ unit-tested offline (scripts/tests/test_voice_walk.py).
 
 Commands arrive as JSON on /gurdy/voice_command:
     {"action": "walk_forward", "distance_m": 0.2, "mode": "rl" | "scripted", "id": "..."}
+    {"action": "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
     {"action": "stop", "id": "..."}
     {"action": "status", "id": "..."}
 "id" is optional and echoed back in the feedback so the client can match it.
@@ -13,12 +14,19 @@ requested distance. In "scripted" mode it steps the --wave-all gait. In
 "rl" mode it acts with the policy, and if the policy makes less than
 RL_MIN_PROGRESS of forward progress over RL_WINDOW steps (or there is no
 policy) it switches to the scripted gait for the rest of the distance.
+
+walk_left / walk_right step the scripted side-step gait (test_gait.py
+--left / --right) until the robot has moved distance_m along +y / -y. They
+are scripted only: there is no sideways RL policy, so their mode is always
+"scripted" (a requested mode is accepted and ignored).
 """
 import json
 import math
 from collections import deque
 
-ACTIONS = ("walk_forward", "stop", "status")
+WALK_ACTIONS = ("walk_forward", "walk_left", "walk_right")
+SIDE_ACTIONS = ("walk_left", "walk_right")
+ACTIONS = WALK_ACTIONS + ("stop", "status")
 MODES = ("rl", "scripted")
 DEFAULT_DISTANCE_M = 0.2
 MAX_DISTANCE_M = 0.5
@@ -32,6 +40,12 @@ SCRIPTED_MIN_PROGRESS = 0.005  # m
 # The scripted --wave-all gait makes about 0.546 m in 320 steps (README
 # Baseline), 1.7 mm per step. The step limit allows twice that plus a margin.
 SCRIPTED_M_PER_STEP = 0.546 / 320
+# Side-step gait, estimated (not yet measured): 24 steps per cycle that move
+# the body 4 strokes' worth along y (legs 3 and 6 a full stroke each, the four
+# diagonals half), against 16 steps and 4 * cos 30 deg strokes for
+# --wave-all, so about 0.77 * 1.7 = 1.3 mm per step. Measure it with
+# `test_gait.py N --left` and update this.
+SIDE_M_PER_STEP = SCRIPTED_M_PER_STEP * (4.0 / 24) / (4 * math.cos(math.radians(30)) / 16)
 STEP_MARGIN = 64
 
 # Result statuses
@@ -45,8 +59,9 @@ STEP_LIMIT = "step_limit"
 def parse_command(data):
     """
     Validate a voice_command JSON string. Returns a dict with action, id and,
-    for walk_forward, distance_m (clamped to (0, MAX_DISTANCE_M], default
-    DEFAULT_DISTANCE_M) and mode (default "scripted"). Raises ValueError.
+    for the walks, distance_m (clamped to (0, MAX_DISTANCE_M], default
+    DEFAULT_DISTANCE_M) and mode (default "scripted"; always "scripted" for
+    walk_left / walk_right). Raises ValueError.
     """
     try:
         msg = json.loads(data)
@@ -58,7 +73,7 @@ def parse_command(data):
     if action not in ACTIONS:
         raise ValueError("unknown action %r (expected one of %s)" % (action, ", ".join(ACTIONS)))
     cmd = {"action": action, "id": msg.get("id")}
-    if action == "walk_forward":
+    if action in WALK_ACTIONS:
         distance = msg.get("distance_m", DEFAULT_DISTANCE_M)
         try:
             distance = float(distance)
@@ -70,13 +85,13 @@ def parse_command(data):
         mode = msg.get("mode", "scripted")
         if mode not in MODES:
             raise ValueError("unknown mode %r (expected rl or scripted)" % (mode,))
-        cmd["mode"] = mode
+        cmd["mode"] = "scripted" if action in SIDE_ACTIONS else mode
     return cmd
 
 
-def max_steps_for(distance_m):
-    """Step limit for walking distance_m."""
-    return int(math.ceil(2 * distance_m / SCRIPTED_M_PER_STEP)) + STEP_MARGIN
+def max_steps_for(distance_m, m_per_step=SCRIPTED_M_PER_STEP):
+    """Step limit for walking distance_m with a gait making m_per_step."""
+    return int(math.ceil(2 * distance_m / m_per_step)) + STEP_MARGIN
 
 
 class ProgressWindow(object):
@@ -119,11 +134,16 @@ class ScriptedGait(object):
 
 
 def run_walk(distance_m, mode, robot, gait, policy=None, policy_error=None,
-             should_stop=lambda: False, log=lambda msg: None):
+             should_stop=lambda: False, log=lambda msg: None,
+             position=None, m_per_step=SCRIPTED_M_PER_STEP):
     """
-    Walk forward distance_m.
+    Walk distance_m along the direction position() measures.
 
     robot: forward() -> forward position in m; step(action) -> (fallen, reason)
+    position: () -> position in m along the walk's direction (default
+        robot.forward); e.g. the signed sideways position for a side-step
+    m_per_step: the scripted gait's expected progress per step, for the step
+        limit
     gait: ScriptedGait for the scripted mode and the RL fallback
     policy: callable() -> action for the robot's current state, or None
     policy_error: why there is no policy, for the result
@@ -134,7 +154,9 @@ def run_walk(distance_m, mode, robot, gait, policy=None, policy_error=None,
     "scripted", or "rl+scripted" after a fallback), fallback, and
     fallback_reason / fallback_at_m / fall_reason where they apply.
     """
-    start = robot.forward()
+    if position is None:
+        position = robot.forward
+    start = position()
     result = {"requested_m": distance_m, "mode_requested": mode,
               "fallback": False, "steps": 0}
     current = "scripted"
@@ -149,11 +171,11 @@ def run_walk(distance_m, mode, robot, gait, policy=None, policy_error=None,
     window = ProgressWindow(RL_WINDOW if current == "rl" else SCRIPTED_WINDOW,
                             RL_MIN_PROGRESS if current == "rl" else SCRIPTED_MIN_PROGRESS,
                             start)
-    max_steps = max_steps_for(distance_m)
+    max_steps = max_steps_for(distance_m, m_per_step)
     status = STEP_LIMIT
 
     while result["steps"] < max_steps:
-        walked = robot.forward() - start
+        walked = position() - start
         if walked >= distance_m:
             status = DONE
             break
@@ -163,8 +185,8 @@ def run_walk(distance_m, mode, robot, gait, policy=None, policy_error=None,
         action = policy() if current == "rl" else gait.next_action()
         fallen, reason = robot.step(action)
         result["steps"] += 1
-        position = robot.forward()
-        window.add(position)
+        now = position()
+        window.add(now)
         if fallen:
             status = FALLEN
             result["fall_reason"] = reason
@@ -172,21 +194,21 @@ def run_walk(distance_m, mode, robot, gait, policy=None, policy_error=None,
         if window.stalled():
             if current == "rl":
                 result.update(
-                    fallback=True, fallback_at_m=round(position - start, 4),
+                    fallback=True, fallback_at_m=round(now - start, 4),
                     fallback_reason="RL made only %.1f mm in %d steps"
                                     % (1000 * window.progress(), RL_WINDOW))
                 log("%s; switching to the scripted gait" % result["fallback_reason"])
                 current = "scripted"
                 used.add(current)
-                window = ProgressWindow(SCRIPTED_WINDOW, SCRIPTED_MIN_PROGRESS, position)
+                window = ProgressWindow(SCRIPTED_WINDOW, SCRIPTED_MIN_PROGRESS, now)
             else:
                 status = STUCK
                 break
     else:
-        if robot.forward() - start >= distance_m:
+        if position() - start >= distance_m:
             status = DONE
 
     result["status"] = status
-    result["distance_m"] = round(robot.forward() - start, 4)
+    result["distance_m"] = round(position() - start, 4)
     result["mode_used"] = ("rl+scripted" if used == {"rl", "scripted"} else current)
     return result

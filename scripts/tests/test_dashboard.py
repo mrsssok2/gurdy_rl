@@ -94,6 +94,33 @@ class StateTest(unittest.TestCase):
         self.assertIn("fallback", rows["result"])
         self.assertEqual(rows["heard"], "गरदी आगे बीस सेंटीमीटर चलो।")
 
+    def test_sideways_target(self):
+        s = make_state()
+        at(s, 0.0, 1.0, 0.5)
+        s.command(json.dumps({"action": "walk_left", "distance_m": 0.2, "id": "l"}))
+        self.assertEqual(s.status(), ds.WALKING)
+        self.assertEqual(s.target_point(), (1.0, 0.7))
+        self.assertEqual(s.mode_label(), "scripted")
+        self.assertEqual(s.command_text, "walk_left 0.20 m (scripted)")
+        # Progress is along +y only; x drift does not count
+        at(s, 1.0, 1.02, 0.56)
+        self.assertAlmostEqual(s.walk_progress()[0], 0.06)
+        self.assertAlmostEqual(s.total_distance(), 0.06)
+        self.assertAlmostEqual(s.csv_row()["target_y"], 0.7)
+        s.feedback(json.dumps({"action": "walk_left", "id": "l", "status": "done",
+                               "distance_m": 0.2004, "requested_m": 0.2,
+                               "mode_used": "scripted", "total_distance_m": 0.2004}))
+        self.assertIsNone(s.target_point())
+        self.assertEqual(s.walk_progress(), (0.2004, 0.2))
+        self.assertIn("done: 0.200 m of 0.200 m", s.result_text)
+        # Right is toward -y, and forward_sign does not flip it
+        s = ds.DashboardState(forward_sign=-1)
+        at(s, 0.0, 1.0, 0.5)
+        s.command(json.dumps({"action": "walk_right", "distance_m": 0.3, "id": "r"}))
+        self.assertEqual(s.target_point(), (1.0, 0.2))
+        at(s, 1.0, 1.0, 0.4)
+        self.assertAlmostEqual(s.walk_progress()[0], 0.1)
+
     def test_stopped_and_fallen(self):
         s = make_state()
         at(s, 0.0, 0.0)

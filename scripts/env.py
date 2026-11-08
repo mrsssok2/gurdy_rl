@@ -1148,7 +1148,19 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             float: Forward coordinate of the base, in metres
         """
         return self.FORWARD_SIGN * self._odom.pose.pose.position.x
-    
+
+    def get_lateral_position(self):
+        """
+        Current sideways position of the base: world y, positive to the left
+        of +x. The feet only move along their spokes, so the robot cannot
+        turn on purpose and its base y axis stays (about) the world's. Not
+        flipped by FORWARD_SIGN: left is always the leg 3 (90 deg) side.
+
+        Returns:
+            float: y coordinate of the base, in metres
+        """
+        return self._odom.pose.pose.position.y
+
     def get_forward_distance(self, start_point):
         """
         Calculate signed forward displacement from the start point

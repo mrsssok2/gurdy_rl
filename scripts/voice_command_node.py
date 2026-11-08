@@ -4,6 +4,7 @@ Execute voice commands on Gurdy (in Gazebo, through MyGurdyWalkEnv-v0).
 
 Subscribes /gurdy/voice_command (std_msgs/String, JSON, see voice_walk.py):
     {"action": "walk_forward", "distance_m": 0.2, "mode": "rl" | "scripted", "id": "..."}
+    {"action": "walk_left" | "walk_right", "distance_m": 0.2, "id": "..."}
     {"action": "stop"}   {"action": "status"}
 and publishes exactly one JSON result per command on /gurdy/voice_feedback,
 with the command's action and id, so a client can wait for it with
@@ -15,7 +16,13 @@ robot has gained distance_m along the forward axis (at most 0.5 m). With
 mode "rl" it acts greedily with the Keras DQN model at ~rl_model_path
 (relative paths are under the package), and switches to the scripted gait
 if the policy makes less than 5 mm of progress over 32 steps or the model
-cannot be loaded; the result says so (fallback, fallback_reason). Walks
+cannot be loaded; the result says so (fallback, fallback_reason).
+
+walk_left / walk_right step the scripted side-step gait of test_gait.py
+(--left / --right) until the robot has moved distance_m along world +y / -y
+(at most 0.5 m), with the same stop, stuck, fall and step-limit handling.
+There is no RL for sideways walks. Their distance_m is the sideways
+distance, and it counts toward total_distance_m like a forward walk's. Walks
 start from wherever the robot stands; the sim is reset only at startup
 (~reset_on_start) and after a fall (~reset_on_fall).
 
@@ -41,7 +48,7 @@ from std_msgs.msg import String
 import env as gurdy_env
 import voice_walk
 from dqn_policy import greedy_action, load_model, resolve_model_path
-from test_gait import gait as gait_moves
+from test_gait import gait as gait_moves, side_gait
 
 COMMAND_TOPIC = "/gurdy/voice_command"
 FEEDBACK_TOPIC = "/gurdy/voice_feedback"
@@ -57,6 +64,14 @@ class EnvRobot(object):
 
     def forward(self):
         return self.walk.get_forward_position()
+
+    def lateral(self):
+        """Sideways position, world y (positive to the left)."""
+        return self.walk.get_lateral_position()
+
+    def right(self):
+        """Position toward the right, -y."""
+        return -self.walk.get_lateral_position()
 
     def begin(self):
         """
@@ -100,9 +115,21 @@ class VoiceCommandNode(object):
 
         self.walk = gym.make("MyGurdyWalkEnv-v0").unwrapped
         self.robot = EnvRobot(self.walk)
-        moves, _ = gait_moves(wave_all=True, mirror=False)
-        self.gait = voice_walk.ScriptedGait(
-            [gurdy_env.action_index(leg, move) for leg, move in moves])
+        def scripted(moves_and_direction):
+            moves, _ = moves_and_direction
+            return voice_walk.ScriptedGait(
+                [gurdy_env.action_index(leg, move) for leg, move in moves])
+        # One gait per walk action, each keeping its own phase
+        self.gaits = {"walk_forward": scripted(gait_moves(wave_all=True, mirror=False)),
+                      "walk_left": scripted(side_gait(right=False)),
+                      "walk_right": scripted(side_gait(right=True))}
+        # Position along each walk's direction, and its scripted gait's speed
+        self.positions = {"walk_forward": self.robot.forward,
+                          "walk_left": self.robot.lateral,
+                          "walk_right": self.robot.right}
+        self.m_per_step = {"walk_forward": voice_walk.SCRIPTED_M_PER_STEP,
+                           "walk_left": voice_walk.SIDE_M_PER_STEP,
+                           "walk_right": voice_walk.SIDE_M_PER_STEP}
         if rospy.get_param("~reset_on_start", True):
             rospy.loginfo("Resetting the robot")
             self.walk.reset()
@@ -113,8 +140,9 @@ class VoiceCommandNode(object):
         self.busy = False
         self.stop_id = None          # id of the stop that ended the walk
         self.current = None          # the walk command running
-        self.current_start = None    # forward position at its start
-        self.total_m = 0.0           # forward distance walked since startup
+        self.current_start = None    # its position along its direction at the start
+        self.current_position = None  # () -> that position now
+        self.total_m = 0.0           # distance walked since startup, all directions
         self.last_result = None
 
         self.feedback = rospy.Publisher(FEEDBACK_TOPIC, String, queue_size=10)
@@ -196,7 +224,7 @@ class VoiceCommandNode(object):
                       "last_result": self.last_result}
             if self.busy and self.current_start is not None:
                 status["walking"] = self.current
-                status["distance_m"] = round(self.robot.forward() - self.current_start, 4)
+                status["distance_m"] = round(self.current_position() - self.current_start, 4)
         roll, pitch = self.walk.get_roll_pitch()
         status["roll_deg"] = round(float(np.degrees(roll)), 1)
         status["pitch_deg"] = round(float(np.degrees(pitch)), 1)
@@ -205,45 +233,57 @@ class VoiceCommandNode(object):
     def execute_walk(self, cmd):
         self.stop_event.clear()
         self.stop_id = None
+        action = cmd["action"]
+        position = self.positions[action]
         policy = None
+        # Sideways walks are always scripted (parse_command sets their mode)
         if cmd["mode"] == "rl" and self.load_model() is not None:
             policy = self.greedy_action
         self.robot.begin()
         with self.lock:
-            self.current = {"distance_m": cmd["distance_m"], "mode": cmd["mode"]}
-            self.current_start = self.robot.forward()
-        rospy.loginfo("Walking %.2f m forward, mode %s", cmd["distance_m"], cmd["mode"])
+            self.current = {"action": action, "distance_m": cmd["distance_m"],
+                            "mode": cmd["mode"]}
+            self.current_position = position
+            self.current_start = position()
+        rospy.loginfo("Walking %.2f m %s, mode %s", cmd["distance_m"],
+                      self.DIRECTIONS[action], cmd["mode"])
         result = voice_walk.run_walk(
-            cmd["distance_m"], cmd["mode"], self.robot, self.gait,
+            cmd["distance_m"], cmd["mode"], self.robot, self.gaits[action],
             policy=policy, policy_error=self.model_error,
             should_stop=lambda: self.stop_event.is_set() or rospy.is_shutdown(),
-            log=rospy.logwarn)
+            log=rospy.logwarn, position=position, m_per_step=self.m_per_step[action])
 
         if result["status"] == voice_walk.FALLEN:
             if self.reset_on_fall:
                 rospy.logwarn("Fell (%s); resetting the robot", result.get("fall_reason"))
                 self.walk.reset()
-                self.gait.restart()
+                for gait in self.gaits.values():
+                    gait.restart()
                 result["reset"] = True
         else:
             self.robot.lower_lifted_legs()
         if result["status"] == voice_walk.STOPPED and self.stop_id is not None:
             result["stopped_by"] = self.stop_id
-        result["message"] = self.describe(result)
+        result["message"] = self.describe(result, action)
         with self.lock:
             self.total_m += result["distance_m"]
             result["total_distance_m"] = round(self.total_m, 4)
             self.last_result = {k: result[k] for k in
                                 ("status", "distance_m", "mode_used", "requested_m")}
+            self.last_result["action"] = action
             self.current = None
             self.current_start = None
+            self.current_position = None
             self.busy = False
         self.publish(cmd, **result)
 
-    @staticmethod
-    def describe(result):
-        text = "%s: walked %.3f m of %.3f m in %d steps, mode %s" % (
-            result["status"], result["distance_m"], result["requested_m"],
+    DIRECTIONS = {"walk_forward": "forward", "walk_left": "left", "walk_right": "right"}
+
+    @classmethod
+    def describe(cls, result, action="walk_forward"):
+        side = "" if action == "walk_forward" else " " + cls.DIRECTIONS[action]
+        text = "%s: walked %.3f m of %.3f m%s in %d steps, mode %s" % (
+            result["status"], result["distance_m"], result["requested_m"], side,
             result["steps"], result["mode_used"])
         if result["fallback"]:
             text += "; switched to scripted (%s)" % result["fallback_reason"]
@@ -265,6 +305,7 @@ class VoiceCommandNode(object):
                     self.busy = False
                     self.current = None
                     self.current_start = None
+                    self.current_position = None
                 self.publish(cmd, status="error", message="walk failed: %s" % e)
 
 

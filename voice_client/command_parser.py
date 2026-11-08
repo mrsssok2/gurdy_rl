@@ -2,15 +2,25 @@
 Hindi/Hinglish and English.
 
 parse(transcript) returns a dict with at least
-    intent     "walk_forward" | "stop" | "status" | "mode" | "reset" | "unknown"
+    intent     "walk_forward" | "walk_left" | "walk_right" | "stop" | "status"
+               | "mode" | "reset" | "unknown"
     wake_word  True if the transcript started with (or contained) "Gurdy"
     text       the transcript as given
 plus, per intent:
-    walk_forward  distance_m, distance_cm, defaulted (no distance heard),
+    walk_forward, walk_left, walk_right
+                  distance_m, distance_cm, defaulted (no distance heard),
                   capped (asked for more than MAX_CM)
     mode          mode: "rl" | "scripted"
+    unknown       unsupported: the direction or turn word heard, if that is
+                  why ("peeche", "turn", ...)
 
-Example: "गरदी आगे बीस सेंटीमीटर चलो।" -> walk_forward, 0.2 m.
+Example: "गरदी आगे बीस सेंटीमीटर चलो।" -> walk_forward, 0.2 m;
+"gurdy baayen bees cm chalo" -> walk_left, 0.2 m.
+
+Gurdy's feet move only along their spokes, so it can walk forward and
+sideways but not back (no gait yet) or turn. A sentence with a direction or
+turn word it cannot do ("peeche chalo", "baayen mudo"), or with two
+directions ("aage baayen"), is unknown rather than a forward walk.
 
 The wake word is optional. Intents are checked in the order reset, stop,
 status, mode, walk, so "kitna aage chala?" is a status question and "ruko, aage mat
@@ -56,6 +66,29 @@ NORMAL_WORDS = {"normal", "नॉर्मल", "नार्मल", "नोर
 FORWARD_WORDS = {
     "आगे", "आगें", "aage", "aagey", "aghe", "aaghe", "age", "agey", "aange",
     "forward", "फॉरवर्ड", "फॉर्वर्ड", "ahead",
+}
+LEFT_WORDS = {
+    "बाएं", "बाएँ", "बायें", "बाये", "बाईं", "बायीं", "लेफ्ट",
+    "baayen", "baayein", "baaye", "bayen", "bayein", "baen", "baayi",
+    "left",
+}
+RIGHT_WORDS = {
+    "दाएं", "दाएँ", "दायें", "दाये", "दाईं", "दायीं", "दाहिने", "राइट",
+    "daayen", "daayein", "daaye", "dayen", "dayein", "daen", "daayi", "dahine",
+    "right",
+}
+# Directions and turns Gurdy cannot do: heard alone or with a walk, the
+# command is unknown, never a forward walk
+UNSUPPORTED_WORDS = {
+    # back
+    "पीछे", "पीछें", "peeche", "piche", "peechhe", "pichhe", "back", "backward",
+    "backwards", "reverse", "बैक",
+    # up / down
+    "ऊपर", "upar", "oopar", "up", "नीचे", "neeche", "niche", "down",
+    # turns
+    "मुड़ो", "मुड़ो", "मुड़", "मुड़", "मोड़ो", "घूमो", "घुमो", "घूम",
+    "mudo", "muro", "mud", "modo", "ghoomo", "ghumo", "ghum", "turn", "rotate",
+    "टर्न",
 }
 WALK_VERBS = {
     "चलो", "चल", "चलिए", "चलें", "बढ़ो", "बढ़ो", "बढ़", "जाओ",
@@ -206,18 +239,30 @@ def parse(transcript):
         result.update(intent="mode", mode=mode)
         return result
 
-    forward = any(t in FORWARD_WORDS for t in tokens)
+    unsupported = [t for t in tokens if t in UNSUPPORTED_WORDS]
+    if unsupported:
+        result.update(intent="unknown", unsupported=unsupported[0])
+        return result
+    directions = [intent for intent, words in (("walk_forward", FORWARD_WORDS),
+                                               ("walk_left", LEFT_WORDS),
+                                               ("walk_right", RIGHT_WORDS))
+                  if any(t in words for t in tokens)]
+    if len(directions) > 1:
+        # "aage baayen": a diagonal, which no gait does
+        result.update(intent="unknown", unsupported=" ".join(
+            t for t in tokens if t in FORWARD_WORDS | LEFT_WORDS | RIGHT_WORDS))
+        return result
     walk_verb = any(t in WALK_VERBS for t in tokens)
     cm = find_distance_cm(tokens)
-    # "aage chalo", "aage bees cm", or "bees cm chalo"
-    if forward or (walk_verb and cm is not None):
+    # "aage chalo", "baayen bees cm", or "bees cm chalo" (forward)
+    if directions or (walk_verb and cm is not None):
         defaulted = cm is None or cm <= 0
         if defaulted:
             cm = DEFAULT_CM
         capped = cm > MAX_CM
         cm = min(cm, MAX_CM)
-        result.update(intent="walk_forward", distance_cm=cm,
-                      distance_m=round(cm / 100.0, 4),
+        result.update(intent=directions[0] if directions else "walk_forward",
+                      distance_cm=cm, distance_m=round(cm / 100.0, 4),
                       defaulted=defaulted, capped=capped)
         return result
 

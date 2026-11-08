@@ -20,11 +20,14 @@ sys.path.insert(0, SCRIPTS)
 # --- stub modules ---------------------------------------------------------
 
 class FakeWalk(object):
-    """Walk env stand-in: every action moves the base 2 mm forward."""
+    """Walk env stand-in: every action moves the base 2 mm along self.heading
+    (forward by default; (0, 1) for left)."""
     GAIN = 0.002
 
     def __init__(self):
         self.x = 0.0
+        self.y = 0.0
+        self.heading = (1.0, 0.0)
         self.leg_states = dict.fromkeys(range(1, 7), "GROUND_OUT")
         self.forward_history = deque()
         self.resets = 0
@@ -37,12 +40,15 @@ class FakeWalk(object):
     def get_forward_position(self):
         return self.x
 
+    def get_lateral_position(self):
+        return self.y
+
     def get_roll_pitch(self):
         return 0.0, 0.0
 
     def reset(self):
         self.resets += 1
-        self.x = 0.0
+        self.x = self.y = 0.0
         self.leg_states = dict.fromkeys(range(1, 7), "GROUND_OUT")
 
     def _get_obs(self):
@@ -56,7 +62,8 @@ class FakeWalk(object):
             self.leg_states[leg] = "LIFT_OUT"
         elif move == "LOWER":
             self.leg_states[leg] = "GROUND_OUT"
-        self.x += self.GAIN
+        self.x += self.GAIN * self.heading[0]
+        self.y += self.GAIN * self.heading[1]
         fallen = self.fall_at is not None and len(self.actions) >= self.fall_at
         return self._get_obs(), 0.0, False, {"fallen": fallen,
                                              "fall_reason": "tilt" if fallen else None}
@@ -118,7 +125,14 @@ def install_stubs():
             moves += [(leg, "LIFT"), (leg, "REACH_IN"), (leg, "LOWER"), (leg, "REACH_OUT")]
         return moves, "+x"
 
+    def side_gait(right):
+        moves = []
+        for leg in ((3, 6, 4, 1, 5, 2) if right else (6, 3, 1, 4, 2, 5)):
+            moves += [(leg, "LIFT"), (leg, "REACH_IN"), (leg, "LOWER"), (leg, "REACH_OUT")]
+        return moves, "-y" if right else "+y"
+
     test_gait.gait = gait
+    test_gait.side_gait = side_gait
 
     sys.modules.update({"rospy": rospy, "rospkg": rospkg, "gym": gym,
                         "std_msgs": std_msgs, "std_msgs.msg": std_msgs_msg,
@@ -218,6 +232,52 @@ class NodeTest(unittest.TestCase):
         self.assertEqual(result["status"], "fallen")
         self.assertTrue(result["reset"])
         self.assertEqual(self.walk.resets, 2)
+
+    def test_walk_left(self):
+        self.walk.heading = (0.0, 1.0)
+        self.send(action="walk_left", distance_m=0.1, mode="rl", id="l1")
+        self.run_queued()
+        [result] = self.feedback()
+        self.assertEqual((result["action"], result["id"], result["status"]),
+                         ("walk_left", "l1", "done"))
+        # Sideways is scripted only, even when RL was asked for
+        self.assertEqual(result["mode_used"], "scripted")
+        self.assertFalse(result["fallback"])
+        self.assertGreaterEqual(result["distance_m"], 0.1)
+        self.assertIn("left", result["message"])
+        self.assertEqual(self.node.last_result["action"], "walk_left")
+        # The side gait starts with leg 6 LIFT
+        self.assertEqual(self.walk.actions[0], ACTIONS.index((6, "LIFT")))
+        self.assertTrue(all(s == "GROUND_OUT" for s in self.walk.leg_states.values()))
+
+    def test_walk_right_measures_minus_y(self):
+        self.walk.heading = (0.0, -1.0)
+        self.send(action="walk_right", distance_m=0.05, id="r")
+        self.run_queued()
+        result = self.feedback()[-1]
+        self.assertEqual(result["status"], "done")
+        self.assertGreaterEqual(result["distance_m"], 0.05)
+        self.assertLess(self.walk.y, -0.049)
+        self.assertEqual(self.walk.actions[0], ACTIONS.index((3, "LIFT")))
+        self.assertGreaterEqual(result["total_distance_m"], 0.05)
+
+    def test_walk_left_going_right_is_stuck(self):
+        """Moving the wrong way is no progress: stuck, not done."""
+        self.walk.heading = (0.0, -1.0)
+        self.send(action="walk_left", distance_m=0.2, id="w")
+        self.run_queued()
+        result = self.feedback()[-1]
+        self.assertEqual(result["status"], "stuck")
+        self.assertLess(result["distance_m"], 0)
+
+    def test_walk_left_fall_resets(self):
+        self.walk.heading = (0.0, 1.0)
+        self.walk.fall_at = 5
+        self.send(action="walk_left", distance_m=0.2)
+        self.run_queued()
+        result = self.feedback()[-1]
+        self.assertEqual((result["action"], result["status"]), ("walk_left", "fallen"))
+        self.assertTrue(result["reset"])
 
     def test_stop_busy_and_status_during_walk(self):
         """Commands sent from another thread while the main loop walks."""

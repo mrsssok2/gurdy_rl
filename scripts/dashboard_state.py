@@ -32,6 +32,12 @@ CSV_FIELDS = ["time_s", "x", "y", "z", "yaw_deg", "roll_deg", "pitch_deg", "stat
 
 MODE_LABELS = {"rl": "RL", "scripted": "scripted", "rl+scripted": "RL -> scripted"}
 
+# Walk actions and their direction in the world, as a unit (x, y) vector;
+# forward is multiplied by forward_sign. Sideways is world +y / -y, as the
+# node measures it (env.get_lateral_position).
+WALK_DIRECTIONS = {"walk_forward": (1.0, 0.0), "walk_left": (0.0, 1.0),
+                   "walk_right": (0.0, -1.0)}
+
 
 def quaternion_to_rpy(qx, qy, qz, qw):
     """(roll, pitch, yaw) in radians, ZYX convention (as env.euler_from_quaternion)."""
@@ -62,12 +68,14 @@ def describe_command(cmd):
     if action == "walk_forward":
         return "walk_forward %.2f m (%s)" % (float(cmd.get("distance_m", 0.0)),
                                             MODE_LABELS.get(cmd.get("mode"), cmd.get("mode", "?")))
+    if action in WALK_DIRECTIONS:
+        return "%s %.2f m (scripted)" % (action, float(cmd.get("distance_m", 0.0)))
     return str(action)
 
 
 def describe_feedback(fb):
     action, status = fb.get("action"), fb.get("status")
-    if action == "walk_forward" and "distance_m" in fb and status not in ("busy", "error"):
+    if action in WALK_DIRECTIONS and "distance_m" in fb and status not in ("busy", "error"):
         text = "%s: %.3f m of %.3f m, %s" % (status, fb["distance_m"], fb.get("requested_m", 0.0),
                                              MODE_LABELS.get(fb.get("mode_used"), fb.get("mode_used")))
         if fb.get("fallback"):
@@ -137,12 +145,19 @@ class DashboardState(object):
             return
         self.command_text = describe_command(cmd)
         # A walk while one runs is answered "busy" by the node; keep the first
-        if cmd.get("action") == "walk_forward" and self.walk is None and self.x is not None:
+        action = cmd.get("action")
+        if action in WALK_DIRECTIONS and self.walk is None and self.x is not None:
             target = float(cmd.get("distance_m", 0.2))
+            dx, dy = WALK_DIRECTIONS[action]
+            if action == "walk_forward":
+                dx *= self.forward_sign
+                mode = cmd.get("mode", "scripted")
+            else:
+                mode = "scripted"  # sideways walks have no RL
             self.walk = {
-                "id": cmd.get("id"), "target_m": target, "mode": cmd.get("mode", "scripted"),
-                "start": (self.x, self.y), "start_forward": self.forward(),
-                "target_xy": (self.x + self.forward_sign * target, self.y),
+                "id": cmd.get("id"), "action": action, "target_m": target, "mode": mode,
+                "start": (self.x, self.y), "direction": (dx, dy),
+                "target_xy": (self.x + dx * target, self.y + dy * target),
             }
             self.mode = self.walk["mode"]
 
@@ -157,7 +172,7 @@ class DashboardState(object):
         self.result_text = describe_feedback(fb)
         if "total_distance_m" in fb:
             self.total_m = fb["total_distance_m"]
-        if fb.get("action") != "walk_forward" or self.walk is None:
+        if fb.get("action") not in WALK_DIRECTIONS or self.walk is None:
             return
         if fb.get("id") != self.walk["id"]:
             return  # e.g. "busy" for a second walk
@@ -174,10 +189,15 @@ class DashboardState(object):
     def forward(self):
         return self.forward_sign * (self.x or 0.0)
 
+    def walk_done(self):
+        """Distance the running walk has made along its direction."""
+        (sx, sy), (dx, dy) = self.walk["start"], self.walk["direction"]
+        return ((self.x or 0.0) - sx) * dx + ((self.y or 0.0) - sy) * dy
+
     def walk_progress(self):
         """(done_m, target_m) of the running walk, else of the last one, else None."""
         if self.walk is not None:
-            return self.forward() - self.walk["start_forward"], self.walk["target_m"]
+            return self.walk_done(), self.walk["target_m"]
         if self.last_walk is not None:
             return self.last_walk[1], self.last_walk[2]
         return None
@@ -204,7 +224,7 @@ class DashboardState(object):
         """Total walked, including the running walk so far."""
         total = self.total_m
         if self.walk is not None:
-            total += max(0.0, self.forward() - self.walk["start_forward"])
+            total += max(0.0, self.walk_done())
         return total
 
     def lifted_legs(self):

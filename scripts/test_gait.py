@@ -35,6 +35,21 @@ spoke; one moving IN pulls the body toward it. Spokes: 1 = 210 deg,
 should move about as far toward -x: legs 2 and 5 push OUT, and with
 --wave-all legs 4 and 1 then pull IN.
 
+Sideways (the feet move only along their spokes, so Gurdy cannot turn, but
+it can translate along y):
+--left (+y): the side legs first, then the diagonal legs in pairs whose x
+    components cancel:
+    leg 6 (270 deg) pushes OUT          -> body along +y
+    leg 3 (90 deg) pulls IN             -> body along +y
+    leg 1 (210) OUT, leg 4 (150) IN     -> body along 30 deg, then 150 deg
+    leg 2 (330) OUT, leg 5 (30) IN      -> body along 150 deg, then 30 deg
+    Legs 3 and 6 move the body their full stroke along y, the diagonal legs
+    half of theirs (sin 30 deg).
+--right (-y): the --left gait mirrored across the x axis (3 <-> 6,
+    1 <-> 4, 2 <-> 5).
+For these the report gives the sideways position (world y) instead of the
+forward one.
+
 The env's own episode-end checks (stuck, goal, step limit) are reported but
 ignored; the run stops only on a fall or after N cycles.
 
@@ -42,6 +57,8 @@ Usage (with Gazebo and the controllers running):
     rosrun my_gurdy_description test_gait.py 20 --wave
     rosrun my_gurdy_description test_gait.py 20 --wave --mirror
     rosrun my_gurdy_description test_gait.py 20 --wave-all --hold 0.3
+    rosrun my_gurdy_description test_gait.py 10 --left
+    rosrun my_gurdy_description test_gait.py 10 --right
     rosrun my_gurdy_description test_gait.py --poses   # print the IK angles only
 """
 import argparse
@@ -59,6 +76,12 @@ WAVE_PUSH_LEGS = (1, 4)
 WAVE_PULL_LEGS = (5, 2)
 # Mirror image of each leg across the y axis (spoke angle a -> 180 - a)
 MIRROR_LEG = {1: 2, 2: 1, 3: 3, 4: 5, 5: 4, 6: 6}
+# Side-step strokes for +y, in order: (leg, the planted foot's push)
+SIDE_STROKES = ((6, gurdy_env.REACH_OUT), (3, gurdy_env.REACH_IN),
+                (1, gurdy_env.REACH_OUT), (4, gurdy_env.REACH_IN),
+                (2, gurdy_env.REACH_OUT), (5, gurdy_env.REACH_IN))
+# Mirror image of each leg across the x axis (spoke angle a -> -a)
+MIRROR_X_LEG = {1: 4, 4: 1, 2: 5, 5: 2, 3: 6, 6: 3}
 
 
 def stroke(leg, push):
@@ -82,6 +105,14 @@ def gait(wave_all, mirror):
     return moves, ("-x" if mirror else "+x")
 
 
+def side_gait(right):
+    """(leg, move) list for one side-step cycle, and the expected direction."""
+    moves = []
+    for leg, push in SIDE_STROKES:
+        moves += stroke(MIRROR_X_LEG[leg] if right else leg, push)
+    return moves, ("-y" if right else "+y")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run a fixed per-leg gait through MyGurdyWalkEnv.")
@@ -92,8 +123,13 @@ def main():
                       help="back legs 1 then 4 push OUT, zig-zagging toward +x")
     mode.add_argument("--wave-all", action="store_true",
                       help="as --wave, then front legs 5 then 2 pull IN")
+    mode.add_argument("--left", action="store_true",
+                      help="side-step toward +y: legs 6 OUT, 3 IN, then the diagonals")
+    mode.add_argument("--right", action="store_true",
+                      help="side-step toward -y: the --left gait mirrored")
     parser.add_argument("--mirror", action="store_true",
-                        help="mirror the legs across the y axis, to walk toward -x")
+                        help="mirror the legs across the y axis, to walk toward -x "
+                             "(--wave / --wave-all only)")
     parser.add_argument("--hold", type=float, default=0.0,
                         help="extra sim seconds to wait after each action, on "
                              "top of the env's own %.1f s smooth move (default 0)"
@@ -107,10 +143,16 @@ def main():
         return
     if args.cycles < 1:
         parser.error("give the number of cycles to run (or --poses)")
-    if not (args.wave or args.wave_all):
-        parser.error("choose a gait: --wave or --wave-all")
+    sideways = args.left or args.right
+    if not (args.wave or args.wave_all or sideways):
+        parser.error("choose a gait: --wave, --wave-all, --left or --right")
+    if sideways and args.mirror:
+        parser.error("--mirror applies to --wave / --wave-all only")
 
-    moves, expected = gait(args.wave_all, args.mirror)
+    if sideways:
+        moves, expected = side_gait(args.right)
+    else:
+        moves, expected = gait(args.wave_all, args.mirror)
     cycle_actions = [gurdy_env.action_index(leg, move) for leg, move in moves]
     print("Gait cycle (expect %s): %s" % (
         expected, ", ".join("leg %d %s" % lm for lm in moves)))
@@ -164,15 +206,22 @@ def main():
                   % ((label, move) + error))
         return info["fallen"], info["fall_reason"], done
 
+    # Sideways gaits report world y (and the x drift), the others forward
+    axis = "sideways" if sideways else "forward"
+    position = walk.get_lateral_position if sideways else walk.get_forward_position
+
     def report(label, previous):
-        distance = walk.get_forward_position() - walk.start_forward
+        distance = position() - start[0]
         roll, pitch = walk.get_roll_pitch()
-        print("%-8s forward %+8.4f m  (%+7.4f this cycle)  roll %+6.1f deg  pitch %+6.1f deg"
-              % (label, distance, distance - previous,
+        drift = ("  x drift %+7.4f m" % (walk.get_forward_position() - start[1])
+                 if sideways else "")
+        print("%-8s %s %+8.4f m  (%+7.4f this cycle)%s  roll %+6.1f deg  pitch %+6.1f deg"
+              % (label, axis, distance, distance - previous, drift,
                  math.degrees(roll), math.degrees(pitch)))
         return distance
 
     walk.reset()
+    start = (position(), walk.get_forward_position())
     distance = report("reset", 0.0)
 
     env_done_reported = False
@@ -191,8 +240,8 @@ def main():
             print("FELL in cycle %d: %s" % (cycle, reason))
             break
 
-    print("Total forward distance: %+.4f m over %d cycles (expected %s)"
-          % (distance, cycle, expected))
+    print("Total %s distance: %+.4f m over %d cycles, %d steps (expected %s)"
+          % (axis, distance, cycle, cycle * len(cycle_actions), expected))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,9 @@ HINDI_NUMBERS = (
 assert len(HINDI_NUMBERS) == 101
 
 MODE_NAMES = {"rl": "RL mode", "scripted": "normal mode"}
+# Sideways walks, in romanized Hindi
+SIDE_NAMES = {"walk_left": "baayen", "walk_right": "daayen"}
+WALK_ACTIONS = ("walk_forward",) + tuple(SIDE_NAMES)
 
 
 def number_words(n):
@@ -44,6 +47,25 @@ def distance_words(metres):
     return "%s meter" % number_words(whole)
 
 
+def _side_reply(status, dist, side, feedback, backwards):
+    """First-person reply for a sideways walk (scripted only, no fallback)."""
+    if status == "done":
+        return "Main %s %s chala." % (dist, side)
+    if status == "stopped":
+        return "Main ruk gaya. Main %s %s chala." % (dist, side)
+    if status == "fallen":
+        text = "Main %s %s chalne ke baad gir gaya." % (dist, side)
+        if feedback.get("reset"):
+            text += " Mujhe wapas khada kar diya gaya."
+        return text
+    if status == "stuck":
+        return "Main %s nahi badh paaya, sirf %s %s." % (
+            side, dist, "ulti taraf gaya" if backwards else "chala")
+    if status == "step_limit":
+        return "Main bahut dheere chala. Main %s hi %s chal paaya." % (dist, side)
+    return None
+
+
 def _walk_reply(feedback, parsed):
     status = feedback.get("status")
     walked = feedback.get("distance_m", 0.0)
@@ -52,6 +74,14 @@ def _walk_reply(feedback, parsed):
     if parsed.get("capped"):
         parts.append("Gurdy ek baar mein pachaas centimeter tak hi chalta hai.")
     backwards = walked < -0.005
+
+    side = SIDE_NAMES.get(feedback.get("action"))
+    if side and status != "busy":
+        text = _side_reply(status, dist, side, feedback, backwards)
+        if text is None:
+            return "Robot ne error diya."
+        parts.append(text)
+        return " ".join(parts)
 
     if status == "done":
         mode = MODE_NAMES.get(feedback.get("mode_used"), "normal mode")
@@ -102,6 +132,9 @@ def build_reply(parsed, feedback=None, mode="scripted"):
         body = "Ab %s on hai." % MODE_NAMES[parsed["mode"]]
     elif intent == "reset":
         body = "Theek hai, reset ho gaya. Naya command boliye."
+    elif intent == "unknown" and parsed.get("unsupported"):
+        body = ("Gurdy sirf aage, baayen ya daayen chal sakta hai. "
+                "Boliye, Gurdy baayen bees centimeter chalo.")
     elif intent == "unknown":
         body = "Yeh command samajh nahi aaya. Boliye, Gurdy aage bees centimeter chalo."
     elif feedback is None:
@@ -111,11 +144,11 @@ def build_reply(parsed, feedback=None, mode="scripted"):
     elif intent == "status":
         body = _status_reply(feedback)
     elif intent == "stop":
-        if feedback.get("action") == "walk_forward":
+        if feedback.get("action") in WALK_ACTIONS:
             body = _walk_reply(feedback, parsed)
         else:
             body = "Gurdy pehle se ruka hua hai."
-    elif intent == "walk_forward":
+    elif intent in WALK_ACTIONS:
         body = _walk_reply(feedback, parsed)
     else:
         body = "Yeh command samajh nahi aaya."

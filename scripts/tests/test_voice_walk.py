@@ -58,6 +58,14 @@ class ParseCommandTest(unittest.TestCase):
         self.assertEqual(vw.parse_command(
             '{"action": "walk_forward", "distance_m": -1}')["distance_m"], 0.2)
 
+    def test_side_walks_are_scripted(self):
+        for action in ("walk_left", "walk_right"):
+            cmd = vw.parse_command(json.dumps(
+                {"action": action, "distance_m": 0.9, "mode": "rl", "id": "s"}))
+            self.assertEqual(cmd, {"action": action, "distance_m": 0.5,
+                                   "mode": "scripted", "id": "s"})
+            self.assertEqual(vw.parse_command(json.dumps({"action": action}))["distance_m"], 0.2)
+
     def test_stop_status(self):
         self.assertEqual(vw.parse_command('{"action": "stop"}')["action"], "stop")
         self.assertEqual(vw.parse_command('{"action": "status", "id": 7}')["id"], 7)
@@ -182,6 +190,27 @@ class RunWalkTest(unittest.TestCase):
     def test_step_limit_covers_scripted_gait(self):
         # The real gait (1.7 mm per step) must fit in the limit for 50 cm
         self.assertGreater(vw.max_steps_for(0.5), 0.5 / vw.SCRIPTED_M_PER_STEP)
+
+    def test_sideways_uses_position(self):
+        """A side-step measures position(), not forward(), with its own step limit."""
+        robot = FakeRobot(lambda a, s: 0.002)
+        lateral = {"y": 0.3}
+
+        def step(action):
+            lateral["y"] -= 0.0015  # walking right: y falls
+            robot.actions.append(action)
+            return False, None
+        robot.step = step
+        result = vw.run_walk(0.1, "scripted", robot, gait(),
+                             position=lambda: -lateral["y"], m_per_step=vw.SIDE_M_PER_STEP)
+        self.assertEqual(result["status"], vw.DONE)
+        self.assertGreaterEqual(result["distance_m"], 0.1)
+        self.assertEqual(result["steps"], 67)  # ceil(0.1 / 1.5 mm)
+
+    def test_step_limit_covers_side_gait(self):
+        self.assertLess(vw.SIDE_M_PER_STEP, vw.SCRIPTED_M_PER_STEP)
+        self.assertGreater(vw.max_steps_for(0.5, vw.SIDE_M_PER_STEP),
+                           vw.max_steps_for(0.5))
 
 
 if __name__ == "__main__":
