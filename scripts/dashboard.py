@@ -6,6 +6,8 @@ the training plots).
 Left: top-down map in metres with a grid, the start point, the path trail,
 the current position with a heading arrow (from /gurdy/odom), and during a
 voice walk the walk's start and target point.
+Middle: the live camera view, /gurdy/camera/annotated from vision_node.py
+(detections boxed and labelled); ~camera:=false hides it.
 Right, refreshed at ~10 Hz: x, y, heading, this walk's distance (done /
 target) and the total, roll / pitch / height, the lifted leg (from the
 position controller commands), status (STANDING / WALKING / STOPPED /
@@ -16,6 +18,7 @@ The path is logged at 10 Hz to output/demo/path_<timestamp>.csv (in the
 package; ~outdir overrides). Plot a saved log with plot_path.py.
 
     rosrun my_gurdy_description dashboard.py
+    rosrun my_gurdy_description dashboard.py _camera:=false   # no camera panel
 """
 import csv
 import os
@@ -37,6 +40,41 @@ TEXT_WRAP = 34        # characters per line for transcript / command / result
 DEVANAGARI_FONTS = ("Noto Sans Devanagari", "Lohit Devanagari", "Nirmala UI", "Mangal",
                     "Kohinoor Devanagari", "Gargi", "FreeSans")
 DEVANAGARI_PROBE = "ग"  # GA
+CAMERA_TOPIC = "/gurdy/camera/annotated"
+# Show every CAMERA_DECIMATE-th pixel (2: 800x600 -> 400x300, cheaper
+# redraws but the detection labels get hard to read)
+CAMERA_DECIMATE = 1
+# A frame older than this (wall-clock s) is marked stale
+CAMERA_STALE_S = 2.0
+
+
+def image_to_rgb(msg, decimate=1):
+    """
+    sensor_msgs/Image (rgb8, bgr8 or mono8) -> HxWx3 uint8 RGB numpy array,
+    without cv_bridge. Rows may be padded (step > width * channels).
+    """
+    import numpy as np
+    channels = {"rgb8": 3, "bgr8": 3, "mono8": 1}.get(msg.encoding)
+    if channels is None:
+        raise ValueError("unsupported image encoding %r" % msg.encoding)
+    rows = np.frombuffer(msg.data, np.uint8).reshape(msg.height, msg.step)
+    img = rows[:, :msg.width * channels].reshape(msg.height, msg.width, channels)
+    if msg.encoding == "bgr8":
+        img = img[:, :, ::-1]
+    elif channels == 1:
+        img = np.repeat(img, 3, axis=2)
+    return np.ascontiguousarray(img[::decimate, ::decimate])
+
+
+class CameraFeed(object):
+    """Latest camera frame (RGB array) and its arrival time, set from a callback."""
+
+    def __init__(self):
+        self.frame = None
+        self.received = None
+
+    def set(self, rgb, now):
+        self.frame, self.received = rgb, now
 
 
 def find_devanagari_font():
@@ -74,11 +112,27 @@ def wrap(text, width=TEXT_WRAP, lines=2):
 class Dashboard(object):
     """The figure; update() redraws it from a DashboardState under lock."""
 
-    def __init__(self, fig, state, lock):
+    def __init__(self, fig, state, lock, camera=None):
+        """camera: a CameraFeed for the middle camera panel, or None for none."""
         self.fig, self.state, self.lock = fig, state, lock
-        grid = fig.add_gridspec(1, 2, width_ratios=[3, 2], wspace=0.08,
-                                left=0.06, right=0.98, top=0.93, bottom=0.07)
-        ax = self.ax = fig.add_subplot(grid[0, 0])
+        self.camera = camera
+        if camera is None:
+            grid = fig.add_gridspec(1, 2, width_ratios=[3, 2], wspace=0.08,
+                                    left=0.06, right=0.98, top=0.93, bottom=0.07)
+            map_cell, panel_cell = grid[0, 0], grid[0, 1]
+        else:
+            grid = fig.add_gridspec(1, 3, width_ratios=[3, 3, 2.4], wspace=0.1,
+                                    left=0.04, right=0.99, top=0.93, bottom=0.07)
+            map_cell, panel_cell = grid[0, 0], grid[0, 2]
+            cam = self.cam_ax = fig.add_subplot(grid[0, 1])
+            cam.set_title("Camera - what Gurdy sees", fontsize=18)
+            cam.set_xticks([])
+            cam.set_yticks([])
+            self.cam_image = None
+            self.cam_text = cam.text(0.5, 0.5, "waiting for\n" + CAMERA_TOPIC, ha="center",
+                                     va="center", fontsize=14, color="#555555",
+                                     transform=cam.transAxes)
+        ax = self.ax = fig.add_subplot(map_cell)
         ax.set_title("Gurdy - top view", fontsize=18)
         ax.set_xlabel("x (m)", fontsize=14)
         ax.set_ylabel("y (m)", fontsize=14)
@@ -96,7 +150,7 @@ class Dashboard(object):
         ax.legend(loc="upper left", fontsize=12)
         self.limits = None
 
-        panel = self.panel = fig.add_subplot(grid[0, 1])
+        panel = self.panel = fig.add_subplot(panel_cell)
         panel.axis("off")
         self.status_text = panel.text(0.5, 0.97, STANDING, ha="center", va="top", fontsize=30,
                                       fontweight="bold", color="white",
@@ -142,8 +196,28 @@ class Dashboard(object):
             self.ax.set_xlim(lo_x, hi_x)
             self.ax.set_ylim(lo_y, hi_y)
 
+    def update_camera(self, now):
+        """Show the latest camera frame; grey out the title if it is stale."""
+        with self.lock:
+            frame, received = self.camera.frame, self.camera.received
+        if frame is None:
+            return
+        if self.cam_image is None:
+            self.cam_image = self.cam_ax.imshow(frame, interpolation="bilinear")
+            self.cam_text.set_text("")
+        elif frame.shape == self.cam_image.get_array().shape:
+            self.cam_image.set_data(frame)
+        else:
+            self.cam_image.set_data(frame)
+            self.cam_image.set_extent((-0.5, frame.shape[1] - 0.5, frame.shape[0] - 0.5, -0.5))
+        stale = received is None or now - received > CAMERA_STALE_S
+        self.cam_text.set_text("no new frames" if stale else "")
+        self.cam_text.set_color("#c62828")
+
     def update(self, _frame=None):
         import math
+        if self.camera is not None:
+            self.update_camera(time.time())
         with self.lock:
             s = self.state
             trail_x, trail_y = list(s.trail_x), list(s.trail_y)
@@ -195,6 +269,7 @@ def default_log_path(outdir):
 def main():
     import rospy
     from nav_msgs.msg import Odometry
+    from sensor_msgs.msg import Image
     from std_msgs.msg import Float64, String
 
     rospy.init_node("gurdy_dashboard", anonymous=True)
@@ -250,8 +325,20 @@ def main():
     rospy.Subscriber("/gurdy/voice_command", String, text_callback(state.command))
     rospy.Subscriber("/gurdy/voice_feedback", String, text_callback(state.feedback))
 
-    fig = plt.figure("Gurdy dashboard", figsize=(15, 8))
-    dashboard = Dashboard(fig, state, lock)
+    camera = CameraFeed() if rospy.get_param("~camera", True) else None
+    if camera is not None:
+        def on_image(msg):
+            try:
+                rgb = image_to_rgb(msg, CAMERA_DECIMATE)
+            except ValueError as e:
+                rospy.logwarn_throttle(10.0, "Camera panel: %s" % e)
+                return
+            with lock:
+                camera.set(rgb, time.time())
+        rospy.Subscriber(CAMERA_TOPIC, Image, on_image, queue_size=1, buff_size=2 ** 24)
+
+    fig = plt.figure("Gurdy dashboard", figsize=(15, 8) if camera is None else (20, 8))
+    dashboard = Dashboard(fig, state, lock, camera)
     if dashboard.devanagari_font:
         rospy.loginfo("Transcript font: %s", dashboard.devanagari_font)
     else:

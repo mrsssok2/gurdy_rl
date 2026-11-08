@@ -208,6 +208,78 @@ class StateTest(unittest.TestCase):
         self.assertEqual(s.status(), ds.STANDING)
 
 
+class ImageTest(unittest.TestCase):
+    def msg(self, encoding, img, pad=0):
+        import types
+        import numpy as np
+        h, w = img.shape[:2]
+        rows = img.reshape(h, -1)
+        rows = np.hstack([rows, np.full((h, pad), 7, np.uint8)])
+        return types.SimpleNamespace(encoding=encoding, height=h, width=w,
+                                     step=rows.shape[1], data=rows.tobytes())
+
+    def test_bgr_with_padding(self):
+        import numpy as np
+        img = np.arange(4 * 5 * 3, dtype=np.uint8).reshape(4, 5, 3)
+        rgb = dashboard.image_to_rgb(self.msg("bgr8", img, pad=4))
+        np.testing.assert_array_equal(rgb, img[:, :, ::-1])
+
+    def test_rgb_mono_and_decimate(self):
+        import numpy as np
+        img = np.arange(6 * 8 * 3, dtype=np.uint8).reshape(6, 8, 3)
+        np.testing.assert_array_equal(dashboard.image_to_rgb(self.msg("rgb8", img), 2),
+                                      img[::2, ::2])
+        mono = np.arange(12, dtype=np.uint8).reshape(3, 4)
+        rgb = dashboard.image_to_rgb(self.msg("mono8", mono))
+        self.assertEqual(rgb.shape, (3, 4, 3))
+        np.testing.assert_array_equal(rgb[:, :, 1], mono)
+
+    def test_bad_encoding(self):
+        import numpy as np
+        with self.assertRaises(ValueError):
+            dashboard.image_to_rgb(self.msg("32FC1", np.zeros((2, 2), np.uint8)))
+
+
+class VisionStateTest(unittest.TestCase):
+    def test_go_to_object_walks_then_stands(self):
+        s = make_state()
+        at(s, 0.0, 0.0, 0.0)
+        s.command(json.dumps({"action": "go_to_object", "color": "red", "shape": "ball",
+                              "id": "g"}))
+        self.assertEqual(s.command_text, "go_to_object red ball")
+        self.assertEqual(s.status(), ds.WALKING)
+        self.assertIsNone(s.target_point())
+        # A walk meanwhile is busy: no target drawn for it
+        s.command(json.dumps({"action": "walk_forward", "distance_m": 0.2, "id": "w"}))
+        self.assertIsNone(s.walk)
+        s.feedback(json.dumps({"action": "go_to_object", "id": "g", "status": "reached",
+                               "color": "red", "shape": "ball", "distance_m": 0.155,
+                               "total_distance_m": 0.155}))
+        self.assertEqual(s.status(), ds.STANDING)
+        self.assertEqual(s.result_text, "reached: red ball, 0.155 m")
+        self.assertAlmostEqual(s.total_distance(), 0.155)
+        rows = dict(s.panel())
+        self.assertEqual(rows["this walk"], "-")
+
+    def test_go_to_object_stopped(self):
+        s = make_state()
+        at(s, 0.0, 0.0, 0.0)
+        s.command(json.dumps({"action": "go_to_object", "color": "blue", "id": "g"}))
+        self.assertEqual(s.command_text, "go_to_object blue object")
+        s.feedback(json.dumps({"action": "go_to_object", "id": "g", "status": "stopped",
+                               "color": "blue", "shape": "box", "distance_m": 0.05}))
+        self.assertEqual(s.status(), ds.STOPPED)
+
+    def test_describe_result(self):
+        s = make_state()
+        s.feedback(json.dumps({"action": "describe", "status": "ok", "objects": [
+            {"color": "red", "shape": "ball", "side": "center"},
+            {"color": "blue", "shape": "box", "side": "left"}]}))
+        self.assertEqual(s.result_text, "sees: red ball (center), blue box (left)")
+        s.feedback(json.dumps({"action": "describe", "status": "ok", "objects": []}))
+        self.assertEqual(s.result_text, "sees: nothing")
+
+
 class DashboardFigureTest(unittest.TestCase):
     def test_renders(self):
         import matplotlib.pyplot as plt
@@ -228,6 +300,33 @@ class DashboardFigureTest(unittest.TestCase):
         self.assertGreaterEqual(hi, 0.3)
         heard = [v.get_text() for v in board.values if "गरदी" in v.get_text()][0]
         self.assertLessEqual(len(heard.split("\n")), 2)
+        fig.canvas.draw()
+        plt.close(fig)
+
+    def test_renders_with_camera(self):
+        import time
+        import types
+        import matplotlib.pyplot as plt
+        import numpy as np
+        s = make_state()
+        feed = dashboard.CameraFeed()
+        fig = plt.figure(figsize=(20, 8))
+        board = dashboard.Dashboard(fig, s, threading.Lock(), feed)
+        board.update()  # no frame yet: the placeholder stays
+        self.assertIn(dashboard.CAMERA_TOPIC, board.cam_text.get_text())
+        bgr = np.zeros((600, 800, 3), np.uint8)
+        bgr[:, :, 2] = 200  # red in BGR
+        msg = types.SimpleNamespace(encoding="bgr8", height=600, width=800, step=2400,
+                                    data=bgr.tobytes())
+        feed.set(dashboard.image_to_rgb(msg, dashboard.CAMERA_DECIMATE), time.time())
+        board.update()
+        shown = board.cam_image.get_array()
+        n = dashboard.CAMERA_DECIMATE
+        self.assertEqual(shown.shape, (600 // n, 800 // n, 3))
+        self.assertEqual(tuple(shown[0, 0]), (200, 0, 0))  # shown as RGB red
+        self.assertEqual(board.cam_text.get_text(), "")
+        board.update_camera(time.time() + 10)
+        self.assertEqual(board.cam_text.get_text(), "no new frames")
         fig.canvas.draw()
         plt.close(fig)
 

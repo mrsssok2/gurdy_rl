@@ -273,11 +273,11 @@ def annotate(bgr, objects, center_deg=CENTER_DEG, camera=None):
         cv2.rectangle(out, (x, y), (x + w, y + h), color, 2)
         cv2.circle(out, tuple(obj["centroid"]), 4, (255, 255, 255), -1)
         text = label(obj)
-        ty = y - 8 if y > 24 else y + h + 22
-        (text_w, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 4)
+        ty = y - 8 if y > 28 else y + h + 26
+        (text_w, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.75, 5)
         tx = max(0, min(x, width - text_w - 2))
-        cv2.putText(out, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4,
+        cv2.putText(out, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0), 5,
                     cv2.LINE_AA)
-        cv2.putText(out, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
+        cv2.putText(out, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.75, color, 2,
                     cv2.LINE_AA)
     return out

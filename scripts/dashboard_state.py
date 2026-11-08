@@ -70,6 +70,8 @@ def describe_command(cmd):
                                             MODE_LABELS.get(cmd.get("mode"), cmd.get("mode", "?")))
     if action in WALK_DIRECTIONS:
         return "%s %.2f m (scripted)" % (action, float(cmd.get("distance_m", 0.0)))
+    if action == "go_to_object":
+        return "go_to_object %s %s" % (cmd.get("color"), cmd.get("shape") or "object")
     return str(action)
 
 
@@ -81,6 +83,12 @@ def describe_feedback(fb):
         if fb.get("fallback"):
             text += " (fallback: %s)" % fb.get("fallback_reason")
         return text
+    if action == "go_to_object" and status not in ("busy", "error"):
+        return "%s: %s %s, %.3f m" % (status, fb.get("color"), fb.get("shape") or "object",
+                                      fb.get("distance_m", 0.0))
+    if action == "describe" and status == "ok":
+        return "sees: " + (", ".join("%s %s (%s)" % (o.get("color"), o.get("shape"), o.get("side"))
+                                     for o in fb.get("objects") or ()) or "nothing")
     if action == "status" and "total_distance_m" in fb:
         return "status: %s, total %.3f m" % (status, fb["total_distance_m"])
     return "%s: %s%s" % (action, status, (" - " + fb["message"]) if fb.get("message") else "")
@@ -105,6 +113,7 @@ class DashboardState(object):
         self.mode = None               # last requested / used walk mode
 
         self.walk = None               # the running walk (see command())
+        self.approach_id = None        # id of a running go_to_object
         self.last_walk = None          # (status, distance_m, requested_m) of the last one
         self.total_m = 0.0
         self._last_log = None
@@ -146,7 +155,12 @@ class DashboardState(object):
         self.command_text = describe_command(cmd)
         # A walk while one runs is answered "busy" by the node; keep the first
         action = cmd.get("action")
-        if action in WALK_DIRECTIONS and self.walk is None and self.x is not None:
+        busy = self.walk is not None or self.approach_id is not None
+        if action == "go_to_object" and not busy:
+            # No target point: the visual approach picks its own path
+            self.approach_id = cmd.get("id")
+            self.mode = "scripted"
+        if action in WALK_DIRECTIONS and not busy and self.x is not None:
             target = float(cmd.get("distance_m", 0.2))
             dx, dy = WALK_DIRECTIONS[action]
             dx *= self.forward_sign
@@ -172,6 +186,12 @@ class DashboardState(object):
         self.result_text = describe_feedback(fb)
         if "total_distance_m" in fb:
             self.total_m = fb["total_distance_m"]
+        if fb.get("action") == "go_to_object" and self.approach_id is not None:
+            if fb.get("id") == self.approach_id:
+                if fb.get("status") != "error":
+                    self.last_walk = (fb.get("status"), fb.get("distance_m", 0.0), None)
+                self.approach_id = None
+            return
         if fb.get("action") not in WALK_DIRECTIONS or self.walk is None:
             return
         if fb.get("id") != self.walk["id"]:
@@ -211,7 +231,7 @@ class DashboardState(object):
     def status(self):
         if self.tilted():
             return FALLEN
-        if self.walk is not None:
+        if self.walk is not None or self.approach_id is not None:
             return WALKING
         if self.last_walk is not None:
             if self.last_walk[0] == "fallen":
