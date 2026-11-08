@@ -642,15 +642,20 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     """
     Environment for training the Gurdy robot to walk
     """
-    # Reward per metre of forward (+x) progress; negative when moving backwards
+    # Which world x direction counts as forward: +1 for +x, -1 for -x. Every
+    # forward velocity, distance, progress and stuck check goes through
+    # get_forward_position() / get_forward_velocity(), so flipping this one
+    # constant flips them all.
+    FORWARD_SIGN = +1
+    # Reward per metre of forward progress; negative when moving backwards
     PROGRESS_WEIGHT = 20.0
     # Maximum per-step reward for staying upright (was 5.0, which made
     # standing still worth far more than walking)
     UPRIGHT_BONUS = 0.2
-    # Episode ends once the robot has walked this far forward (+x), in metres
+    # Episode ends once the robot has walked this far forward, in metres
     TARGET_FORWARD_DISTANCE = 5.0
     # The robot is "stuck" if it gains less than STUCK_MIN_PROGRESS metres of
-    # forward (+x) progress over the last STUCK_WINDOW steps
+    # forward progress over the last STUCK_WINDOW steps
     STUCK_WINDOW = 10
     STUCK_MIN_PROGRESS = 0.01
 
@@ -664,9 +669,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.action_space = spaces.Discrete(5)
         
         # Define observation space
-        # Upper-leg offsets from NEUTRAL_POSE (6), signed forward (x)
-        # velocity, signed forward (x) distance from start, head height. Velocity and distance go negative
-        # when the robot moves backwards.
+        # Upper-leg offsets from NEUTRAL_POSE (6), signed forward velocity,
+        # signed forward distance from start, head height. Velocity and
+        # distance go negative when the robot moves backwards.
         low = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -2.0, -10.0, 0.0])
         high = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 2.0, 10.0, 1.0])
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
@@ -697,12 +702,15 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Store the start point
         self.start_point = self._odom.pose.pose.position
 
-        # x position at the previous step, used for per-step forward progress
-        self.prev_x = self.start_point.x
-        
-        # x positions over the last STUCK_WINDOW steps (plus the start), used
-        # to detect when the robot has stopped making forward progress
-        self.x_history = deque([self.start_point.x], maxlen=self.STUCK_WINDOW + 1)
+        # Forward position at the start and at the previous step, used for
+        # per-step forward progress
+        self.start_forward = self.get_forward_position()
+        self.prev_forward = self.start_forward
+
+        # Forward positions over the last STUCK_WINDOW steps (plus the start),
+        # used to detect when the robot has stopped making forward progress
+        self.forward_history = deque([self.start_forward],
+                                     maxlen=self.STUCK_WINDOW + 1)
 
     def _set_action(self, action):
         """
@@ -746,10 +754,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Get joint angles
         joint_angles = self.get_joint_angles()
         
-        # Signed forward (x) velocity from odometry (negative = moving backwards)
+        # Signed forward velocity from odometry (negative = moving backwards)
         forward_velocity = self.get_forward_velocity()
         
-        # Signed forward (x) displacement from the start point
+        # Signed forward displacement from the start point
         forward_distance = self.get_forward_distance(self.start_point)
         
         # Get head height
@@ -776,10 +784,10 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             rospy.logwarn("Episode done: Robot has fallen (%s)", self.fall_reason)
             return True
         
-        # Forward (+x) progress from ground-truth odometry, matching the reward
-        current_x = self._odom.pose.pose.position.x
-        self.x_history.append(current_x)
-        forward_distance = current_x - self.start_point.x
+        # Forward progress from ground-truth odometry, matching the reward
+        current = self.get_forward_position()
+        self.forward_history.append(current)
+        forward_distance = current - self.start_forward
         
         # Check if the target forward distance is reached
         if forward_distance >= self.TARGET_FORWARD_DISTANCE:
@@ -788,8 +796,8 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         
         # Check if the robot is stuck: too little forward progress over the
         # last STUCK_WINDOW steps (moving backwards also counts as stuck)
-        if len(self.x_history) > self.STUCK_WINDOW:
-            recent_progress = self.x_history[-1] - self.x_history[0]
+        if len(self.forward_history) > self.STUCK_WINDOW:
+            recent_progress = self.forward_history[-1] - self.forward_history[0]
             if recent_progress < self.STUCK_MIN_PROGRESS:
                 rospy.loginfo("Episode done: Robot is stuck (%.3f m forward in last %d steps)",
                               recent_progress, self.STUCK_WINDOW)
@@ -821,15 +829,15 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         if fallen:
             return -100.0
 
-        # Forward progress along +x this step (signed: moving backwards is
+        # Forward progress this step (signed: moving backwards is
         # penalised). Uses ground-truth odometry directly.
-        current_x = self._odom.pose.pose.position.x
-        delta_x = current_x - self.prev_x
-        self.prev_x = current_x
-        progress_reward = self.PROGRESS_WEIGHT * delta_x
+        current = self.get_forward_position()
+        delta_forward = current - self.prev_forward
+        self.prev_forward = current
+        progress_reward = self.PROGRESS_WEIGHT * delta_forward
 
         # Net forward displacement over the episode so far
-        forward_distance = current_x - self.start_point.x
+        forward_distance = current - self.start_forward
 
         # Small bonus for staying upright. Kept well below what walking earns,
         # so standing still is not the best strategy.
@@ -877,26 +885,35 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     
     def get_forward_velocity(self):
         """
-        Retrieve signed forward (x) velocity from odometry
-        
+        Retrieve signed forward velocity from odometry
+
         Returns:
-            float: x velocity in the world frame (negative = moving backwards)
+            float: Velocity along FORWARD_SIGN * world x (negative = moving backwards)
         """
         if self._odom:
-            return self._odom.twist.twist.linear.x
+            return self.FORWARD_SIGN * self._odom.twist.twist.linear.x
         return 0.0
+
+    def get_forward_position(self):
+        """
+        Current position along the forward direction (FORWARD_SIGN * world x)
+
+        Returns:
+            float: Forward coordinate of the base, in metres
+        """
+        return self.FORWARD_SIGN * self._odom.pose.pose.position.x
     
     def get_forward_distance(self, start_point):
         """
-        Calculate signed forward (x) displacement from the start point
-        
+        Calculate signed forward displacement from the start point
+
         Args:
             start_point (Point): The initial Point object
-        
+
         Returns:
-            float: x displacement from the start (negative = behind the start)
+            float: Forward displacement from the start (negative = behind the start)
         """
-        return self._odom.pose.pose.position.x - start_point.x
+        return self.get_forward_position() - self.FORWARD_SIGN * start_point.x
 
 # Register the environment
 gym.envs.registration.register(
