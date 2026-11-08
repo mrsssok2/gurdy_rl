@@ -912,7 +912,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.max_steps = int(rospy.get_param("/gurdy/nsteps", self.DEFAULT_MAX_STEPS))
         self.distance_moved = 0.0
         self.initial_height = 0.0  # Initial height of the robot
-        
+        # Forward positions for the stuck check; reset() refills it. Created
+        # here so code that starts an episode without a reset
+        # (voice_command_node.py with reset_on_start:=false) can clear it.
+        self.forward_history = deque(maxlen=self.STUCK_WINDOW + 1)
+
         rospy.logwarn("ACTION SPACES TYPE===>"+str(self.action_space))
         rospy.logwarn("OBSERVATION SPACES TYPE===>"+str(self.observation_space))
     
