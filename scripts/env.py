@@ -17,6 +17,7 @@ import tf
 from sensor_msgs.msg import JointState
 from nav_msgs.msg import Odometry
 from gazebo_msgs.msg import ContactsState, ModelStates
+from gazebo_msgs.srv import SetModelConfiguration
 from std_srvs.srv import Empty
 
 # Define a function to convert quaternion to Euler angles
@@ -102,7 +103,23 @@ class MyGurdySingleLegEnv(gym.Env):
         self.publishers_array.append(self._joint_pubisher4)
         self.publishers_array.append(self._joint_pubisher5)
         self.publishers_array.append(self._joint_pubisher6)
-        
+
+        # All 12 actuated joints (6 upper + 6 lower legs). Actions only drive
+        # the upper legs, but every joint is zeroed and commanded on reset.
+        self.all_joint_names = (
+            ["head_upperlegM%d_joint" % i for i in range(1, 7)] +
+            ["upperlegM%d_lowerlegM%d_joint" % (i, i) for i in range(1, 7)]
+        )
+        self.lower_leg_publishers = [
+            rospy.Publisher(
+                '/gurdy/upperlegM%d_lowerlegM%d_joint_position_controller/command' % (i, i),
+                Float64,
+                queue_size=1
+            )
+            for i in range(1, 7)
+        ]
+        self.all_publishers = self.publishers_array + self.lower_leg_publishers
+
         # Create subscribers
         rospy.Subscriber("/gurdy/joint_states", JointState, self._joints_callback)
         rospy.Subscriber("/gurdy/odom", Odometry, self._odom_callback)
@@ -111,8 +128,12 @@ class MyGurdySingleLegEnv(gym.Env):
         # Add a bumper contact sensor to detect falls
         rospy.Subscriber("/gurdy/head_bumper", ContactsState, self._bumper_callback)
         
-        # Service used to put the robot back at its spawn pose on every reset
+        # Services used to put the robot back at its spawn pose on every reset
         self._reset_world_srv = rospy.ServiceProxy('/gazebo/reset_world', Empty)
+        self._pause_srv = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
+        self._unpause_srv = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
+        self._set_model_config_srv = rospy.ServiceProxy(
+            '/gazebo/set_model_configuration', SetModelConfiguration)
         
         # Wait for publishers to connect
         self._check_publishers_connection()
@@ -241,7 +262,7 @@ class MyGurdySingleLegEnv(gym.Env):
         Check that all publishers are connected
         """
         rate = rospy.Rate(10)  # 10Hz
-        for publisher_object in self.publishers_array:
+        for publisher_object in self.all_publishers:
             connected = False
             while not connected:
                 connected = publisher_object.get_num_connections() > 0
@@ -265,10 +286,8 @@ class MyGurdySingleLegEnv(gym.Env):
         Returns:
             list: Initial observation
         """
-        # Put the robot back at its spawn pose
-        self._reset_world()
-
-        # Move joints to initial position and wait for the robot to settle
+        # Put the robot back at its spawn pose with all joints zeroed, and
+        # wait for it to settle
         self._set_init_pose()
 
         # Reset ROS-related variables
@@ -330,25 +349,68 @@ class MyGurdySingleLegEnv(gym.Env):
     
     def _set_init_pose(self):
         """
-        Set the robot in its init pose
+        Put the robot back at its spawn pose, standing on zeroed joints.
+
+        /gazebo/reset_world only resets the model pose, not the joint angles,
+        so on its own the robot comes back with bent legs and tips over.
+        With physics paused, reset the pose, zero all 12 joints and set every
+        position controller's target to 0, then unpause and let it settle.
         """
-        # Initial position - centered joints
-        initial_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        self.move_joints(initial_joints)
+        zeros = [0.0] * len(self.all_joint_names)
+
+        self._call_empty_service('/gazebo/pause_physics', self._pause_srv)
+        try:
+            # reset_world (not reset_simulation) keeps sim time running
+            self._call_empty_service('/gazebo/reset_world', self._reset_world_srv)
+
+            rospy.wait_for_service('/gazebo/set_model_configuration')
+            try:
+                resp = self._set_model_config_srv(
+                    model_name="gurdy",
+                    urdf_param_name="robot_description",
+                    joint_names=self.all_joint_names,
+                    joint_positions=zeros)
+                if not resp.success:
+                    rospy.logerr("/gazebo/set_model_configuration failed: %s",
+                                 resp.status_message)
+            except rospy.ServiceException as e:
+                rospy.logerr("/gazebo/set_model_configuration call failed: %s", e)
+
+            # Without this the controllers would drive the joints straight
+            # back to their previous targets once physics resumes
+            self.move_all_joints(zeros)
+        finally:
+            # Always unpause, or the sim-time sleep below would never return
+            self._call_empty_service('/gazebo/unpause_physics', self._unpause_srv)
 
         # Wait for the robot to settle
         self._wait_for_settle()
 
-    def _reset_world(self):
+        roll, pitch = self.get_roll_pitch()
+        rospy.loginfo("Post-reset pose: roll=%.1f deg, pitch=%.1f deg, z=%.4f m",
+                      math.degrees(roll), math.degrees(pitch),
+                      self._odom.pose.pose.position.z)
+
+    def _call_empty_service(self, name, proxy):
         """
-        Reset model poses in Gazebo so the robot returns to its spawn pose.
-        Uses /gazebo/reset_world (not reset_simulation) so sim time keeps running.
+        Wait for and call a std_srvs/Empty Gazebo service, logging failures.
         """
-        rospy.wait_for_service('/gazebo/reset_world')
+        rospy.wait_for_service(name)
         try:
-            self._reset_world_srv()
+            proxy()
         except rospy.ServiceException as e:
-            rospy.logerr("/gazebo/reset_world call failed: %s", e)
+            rospy.logerr("%s call failed: %s", name, e)
+
+    def get_roll_pitch(self):
+        """
+        Roll and pitch of the base from the odometry quaternion
+
+        Returns:
+            tuple: (roll, pitch) in radians
+        """
+        q = self._odom.pose.pose.orientation
+        roll, pitch, _ = euler_from_quaternion([q.x, q.y, q.z, q.w])
+        return roll, pitch
 
     def _wait_for_settle(self, settle_time=1.0):
         """
@@ -389,7 +451,17 @@ class MyGurdySingleLegEnv(gym.Env):
             joint_value.data = joint_positions[i]
             publisher_object.publish(joint_value)
             i += 1
-    
+
+    def move_all_joints(self, joint_positions):
+        """
+        Command all 12 joints (upper legs M1-M6, then lower legs M1-M6)
+
+        Args:
+            joint_positions (list): 12 joint positions, ordered as all_joint_names
+        """
+        for publisher_object, position in zip(self.all_publishers, joint_positions):
+            publisher_object.publish(Float64(data=position))
+
     def _get_obs(self):
         """
         Get observation
@@ -495,22 +567,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     
     def _set_init_pose(self):
         """Sets the Robot in its init pose"""
-        # Initial position - centered joints
-        initial_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        self.move_joints(initial_joints)
+        # Reset pose and joints, then wait for the robot to settle
+        super(MyGurdyWalkEnv, self)._set_init_pose()
 
-        # Wait for the robot to settle so the height below is the resting height
-        self._wait_for_settle()
-
-        # Store initial height
-        if self._model_states:
-            try:
-                gurdy_index = self._model_states.name.index("gurdy")
-                self.initial_height = self._model_states.pose[gurdy_index].position.z
-                rospy.loginfo(f"Initial height of Gurdy: {self.initial_height}")
-            except (ValueError, IndexError):
-                self.initial_height = 0.18  # Default if not found
-                rospy.logwarn("Could not determine initial height, using default")
+        # The settled height is the reference for the rest of the episode
+        self.initial_height = self._odom.pose.pose.position.z
     
     def _init_env_variables(self):
         """Initializes variables at the start of each episode"""
