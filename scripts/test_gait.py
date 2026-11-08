@@ -7,6 +7,16 @@ GROUND_OUT), then loops a stroke for N cycles. After each cycle it prints
 the forward distance from the start, the progress made that cycle, base roll
 and pitch, and any fall.
 
+After each action it also prints the joint tracking error, |actual - target|
+over all 12 joints, sampled from /gurdy/joint_states from the moment the
+action is sent until the end of its hold:
+    max  the largest error seen during the action. It includes the jump
+         to the new target right at the start, so it is roughly the size
+         of the move.
+    end  the largest error at the last sample, i.e. how far the worst
+         joint still is from its foot pose when the next action starts.
+         An end error near max means the pose was never reached.
+
 A stroke moves one group through
     LIFT, <return reach>, LOWER, <push reach>
 so the feet travel back in the air and the push happens while they are
@@ -35,6 +45,7 @@ import sys
 
 import gym
 import rospy
+from sensor_msgs.msg import JointState
 
 import env as gurdy_env
 
@@ -94,11 +105,53 @@ def main():
     rospy.init_node("gurdy_test_gait", anonymous=True)
     walk = gym.make("MyGurdyWalkEnv-v0").unwrapped
 
+    # joint_states received while an action runs, as {joint: position}
+    joint_samples = []
+    recording = [False]
+
+    def on_joints(msg):
+        if recording[0]:
+            joint_samples.append(dict(zip(msg.name, msg.position)))
+
+    rospy.Subscriber("/gurdy/joint_states", JointState, on_joints)
+
+    def joint_targets():
+        """{joint: target angle} for the env's current group foot poses."""
+        hips, knees = [0.0] * 6, [0.0] * 6
+        for group, legs in gurdy_env.GROUP_LEGS.items():
+            hip, knee = gurdy_env.POSE_ANGLES[walk.group_states[group]]
+            for leg in legs:
+                hips[leg - 1], knees[leg - 1] = hip, knee
+        return dict(zip(walk.all_joint_names, hips + knees))
+
+    def tracking_error(targets):
+        """
+        (max error over the action, worst joint at that moment, end error,
+        worst joint at the end) over joint_samples, or None if empty.
+        """
+        def worst(sample):
+            return max((abs(sample[j] - t), j) for j, t in targets.items() if j in sample)
+        per_sample = [worst(sample) for sample in joint_samples]
+        if not per_sample:
+            return None
+        peak, end = max(per_sample), per_sample[-1]
+        return peak[0], peak[1], end[0], end[1]
+
     def run(action):
         """Step the env, then hold. Returns (fallen, fall reason, done)."""
+        del joint_samples[:]
+        recording[0] = True
         _, _, done, info = walk.step(action)
         if args.hold > 0:
             rospy.sleep(args.hold)
+        recording[0] = False
+        group, move = gurdy_env.ACTIONS[action]
+        error = tracking_error(joint_targets())
+        if error is None:
+            print("  %-6s %-9s no joint_states received" % (group, move))
+        else:
+            print("  %-6s %-9s tracking error max %.3f rad (%s)  end %.3f rad (%s)"
+                  % ((group, move) + error))
         return info["fallen"], info["fall_reason"], done
 
     def report(label, previous):
