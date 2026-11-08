@@ -17,8 +17,8 @@ import tf
 from sensor_msgs.msg import JointState
 from nav_msgs.msg import Odometry
 from gazebo_msgs.msg import ContactsState, ModelStates
-from gazebo_msgs.srv import SetModelConfiguration
-from std_srvs.srv import Empty
+
+from reset_pose import reset_to_pose
 
 # Define a function to convert quaternion to Euler angles
 def euler_from_quaternion(quaternion):
@@ -171,13 +171,6 @@ class MyGurdySingleLegEnv(gym.Env):
         
         # Add a bumper contact sensor to detect falls
         rospy.Subscriber("/gurdy/head_bumper", ContactsState, self._bumper_callback)
-        
-        # Services used to put the robot back at its spawn pose on every reset
-        self._reset_world_srv = rospy.ServiceProxy('/gazebo/reset_world', Empty)
-        self._pause_srv = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
-        self._unpause_srv = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
-        self._set_model_config_srv = rospy.ServiceProxy(
-            '/gazebo/set_model_configuration', SetModelConfiguration)
         
         # Wait for publishers to connect
         self._check_publishers_connection()
@@ -438,49 +431,17 @@ class MyGurdySingleLegEnv(gym.Env):
 
     def _reset_pose_once(self):
         """
-        Put the robot back at its spawn pose, standing in NEUTRAL_POSE.
+        Put the robot back at its spawn x, y and orientation, already in
+        NEUTRAL_POSE and just above the ground (see reset_pose.py).
 
-        /gazebo/reset_world only resets the model pose, not the joint angles,
-        so on its own the robot keeps whatever leg angles it ended with.
-        With physics paused, reset the pose, set all 12 joints to NEUTRAL_POSE
-        and point every position controller at it, then unpause and let it
-        settle.
+        With physics paused, set all 12 joints to NEUTRAL_POSE, place the
+        base 2 cm above its standing height, and point every position
+        controller at NEUTRAL_POSE, then unpause and let it settle.
         """
-
-        self._call_empty_service('/gazebo/pause_physics', self._pause_srv)
-        try:
-            # reset_world (not reset_simulation) keeps sim time running
-            self._call_empty_service('/gazebo/reset_world', self._reset_world_srv)
-
-            rospy.wait_for_service('/gazebo/set_model_configuration')
-            try:
-                resp = self._set_model_config_srv(
-                    model_name="gurdy",
-                    urdf_param_name="robot_description",
-                    joint_names=self.all_joint_names,
-                    joint_positions=NEUTRAL_POSE)
-                if not resp.success:
-                    rospy.logerr("/gazebo/set_model_configuration failed: %s",
-                                 resp.status_message)
-            except rospy.ServiceException as e:
-                rospy.logerr("/gazebo/set_model_configuration call failed: %s", e)
-
-            # Without this the controllers would drive the joints straight
-            # back to their previous targets once physics resumes
-            self.move_all_joints(NEUTRAL_POSE)
-        finally:
-            # Always unpause, or the sim-time wait that follows never returns
-            self._call_empty_service('/gazebo/unpause_physics', self._unpause_srv)
-
-    def _call_empty_service(self, name, proxy):
-        """
-        Wait for and call a std_srvs/Empty Gazebo service, logging failures.
-        """
-        rospy.wait_for_service(name)
-        try:
-            proxy()
-        except rospy.ServiceException as e:
-            rospy.logerr("%s call failed: %s", name, e)
+        # Without move_all_joints the controllers would drive the joints
+        # straight back to their previous targets once physics resumes
+        reset_to_pose(self.all_joint_names, NEUTRAL_POSE,
+                      before_unpause=lambda: self.move_all_joints(NEUTRAL_POSE))
 
     def get_roll_pitch(self):
         """

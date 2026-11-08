@@ -16,6 +16,10 @@ Usage (with Gazebo and the controllers running):
     rosrun my_gurdy_description test_pose.py -1.0 -1.0 -1.0 -1.0 -1.0 -1.0 \\
         -0.6 -0.6 -0.6 -0.6 -0.6 -0.6
     rosrun my_gurdy_description test_pose.py --reset ...   # reset the world first
+
+--reset puts the robot back at its spawn x, y with the joints already at the
+given angles and the base 2 cm above the matching standing height (the same
+reset env.py uses), so the legs are in place before the feet touch down.
 """
 import argparse
 import math
@@ -25,7 +29,8 @@ import rospy
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
-from std_srvs.srv import Empty
+
+from reset_pose import reset_to_pose
 
 UPPER_LIMITS = (-1.55, 0.0)
 LOWER_LIMITS = (-2.9, 0.0)
@@ -53,7 +58,8 @@ def main():
     parser.add_argument("angles", nargs=12, type=float, metavar="ANGLE",
                         help="upper legs M1-M6 then lower legs M1-M6, in radians")
     parser.add_argument("--reset", action="store_true",
-                        help="call /gazebo/reset_world before sending the angles")
+                        help="reset the world and place the robot in the given "
+                             "pose just above the ground before sending the angles")
     args = parser.parse_args(rospy.myargv(argv=sys.argv)[1:])
 
     rospy.init_node("gurdy_test_pose", anonymous=True)
@@ -80,12 +86,15 @@ def main():
         while pub.get_num_connections() == 0 and not rospy.is_shutdown():
             rospy.sleep(0.1)
 
-    if args.reset:
-        rospy.wait_for_service("/gazebo/reset_world")
-        rospy.ServiceProxy("/gazebo/reset_world", Empty)()
+    def send_angles():
+        for pub, angle in zip(publishers, angles):
+            pub.publish(Float64(data=angle))
 
-    for pub, angle in zip(publishers, angles):
-        pub.publish(Float64(data=angle))
+    if args.reset:
+        z = reset_to_pose(joints, angles, before_unpause=send_angles)
+        rospy.loginfo("Reset: placed base at z=%.4f m", z)
+    else:
+        send_angles()
 
     rospy.loginfo("Sent angles, waiting %.0f s...", SETTLE_TIME)
     rospy.sleep(SETTLE_TIME)
