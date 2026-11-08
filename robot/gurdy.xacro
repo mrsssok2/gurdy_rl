@@ -66,9 +66,22 @@
     <xacro:property name="joint_effort" value="3.0"/>
     <!-- rad/s. 0.005 rad/s would need ~5 min for a 1.5 rad stroke. -->
     <xacro:property name="joint_velocity" value="5.0"/>
-    <!-- Passive joint dynamics on all 12 leg joints: viscous damping in
-         N*m*s/rad and Coulomb friction in N*m, to bleed off oscillation. -->
+    <!-- Passive joint dynamics: viscous damping in N*m*s/rad and Coulomb
+         friction in N*m, to bleed off oscillation. -->
     <xacro:property name="joint_damping" value="0.05"/>
+    <!-- Knee damping. The knee controllers' D gain was 0.3, and with a
+         0.68 rad error the knee chattered at ~34 rad/s mean |velocity| with
+         almost no position spread: D (-10 N*m) outweighed P (+6.8) and
+         pushed the knee away from its target. A velocity gain applied once
+         per physics step is only stable while gain * dt / I < 2. At the
+         default 1 ms step, with I ~7.2e-5 kg m^2 about the knee, that means
+         gain < ~0.14, so 0.3 was well past it. The hips (I ~4.3e-4) are
+         fine at 0.3. The knee D gain is now 0.05 (config/gurdy_control.yaml)
+         and this physical damping takes over most of its job. 0.2 would
+         itself break that limit if Gazebo applied it explicitly, so the knee
+         joints set implicitSpringDamper: ODE then folds the damping into
+         the constraint solve, which is stable at any value. -->
+    <xacro:property name="knee_damping" value="0.2"/>
     <xacro:property name="joint_friction" value="0.01"/>
 
     <gazebo>
@@ -273,9 +286,13 @@
                  the thigh). With +1.57 allowed, legs could buckle backwards on
                  landing after a reset and stay stuck in that mirrored pose. -->
             <limit lower="-2.9" upper="0.0" effort="${joint_effort}" velocity="${joint_velocity}"/>
-            <dynamics damping="${joint_damping}" friction="${joint_friction}"/>
+            <dynamics damping="${knee_damping}" friction="${joint_friction}"/>
             <axis xyz="0 1 0"/>
         </joint>
+        <!-- Implicit damping, so knee_damping stays stable; see its note. -->
+        <gazebo reference="upperlegM${number}_lowerlegM${number}_joint">
+            <implicitSpringDamper>true</implicitSpringDamper>
+        </gazebo>
     </xacro:macro>
     
     <xacro:macro name="foot_link" params="number colour">
