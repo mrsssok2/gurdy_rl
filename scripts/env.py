@@ -35,6 +35,26 @@ def euler_from_quaternion(quaternion):
     euler = q.yaw_pitch_roll
     return (euler[2], euler[1], euler[0])  # roll, pitch, yaw
 
+# Neutral stance used on reset and for the "stand still" action: a wide, low,
+# bent-leg crouch. With all joints at 0 the legs point straight down and Gurdy
+# balances on its leg tips, which is tall and tips over easily.
+#
+# Joint directions, worked out from robot/gurdy.xacro (both axes are local y):
+#   - upper leg (limits -1.55..0): 0 points straight down; negative swings the
+#     leg outward and up, reaching about horizontal at -1.55.
+#   - lower leg (limits -2.9..1.57): the lower leg's angle from vertical is
+#     (upper - lower), with negative meaning outward. So lower = upper keeps it
+#     vertical, and a lower angle above upper tilts the foot outward.
+# Upper -1.0 puts the thigh 57 deg out from vertical. Lower -0.6 tilts the shin
+# about 23 deg outward, so the foot sits outside the knee. The feet then land
+# about 0.09 m below the hips (0.12 m with straight legs) and about 0.10 m from
+# the body centre. Upper legs keep 0.55 rad of travel for the gait offsets.
+# Try alternatives by hand with scripts/test_pose.py.
+NEUTRAL_UPPER_LEG = -1.0
+NEUTRAL_LOWER_LEG = -0.6
+# Order matches all_joint_names: upper legs M1-M6, then lower legs M1-M6
+NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
+
 class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
     
@@ -114,7 +134,7 @@ class MyGurdySingleLegEnv(gym.Env):
         self.publishers_array.append(self._joint_pubisher6)
 
         # All 12 actuated joints (6 upper + 6 lower legs). Actions only drive
-        # the upper legs, but every joint is zeroed and commanded on reset.
+        # the upper legs, but every joint is set to NEUTRAL_POSE on reset.
         self.all_joint_names = (
             ["head_upperlegM%d_joint" % i for i in range(1, 7)] +
             ["upperlegM%d_lowerlegM%d_joint" % (i, i) for i in range(1, 7)]
@@ -314,8 +334,8 @@ class MyGurdySingleLegEnv(gym.Env):
         Returns:
             list: Initial observation
         """
-        # Put the robot back at its spawn pose with all joints zeroed, and
-        # wait for it to settle
+        # Put the robot back at its spawn pose in NEUTRAL_POSE, and wait for
+        # it to settle
         self._set_init_pose()
 
         # Reset ROS-related variables
@@ -378,14 +398,14 @@ class MyGurdySingleLegEnv(gym.Env):
     
     def _set_init_pose(self):
         """
-        Put the robot back at its spawn pose, standing on zeroed joints.
+        Put the robot back at its spawn pose, standing in NEUTRAL_POSE.
 
         /gazebo/reset_world only resets the model pose, not the joint angles,
-        so on its own the robot comes back with bent legs and tips over.
-        With physics paused, reset the pose, zero all 12 joints and set every
-        position controller's target to 0, then unpause and let it settle.
+        so on its own the robot keeps whatever leg angles it ended with.
+        With physics paused, reset the pose, set all 12 joints to NEUTRAL_POSE
+        and point every position controller at it, then unpause and let it
+        settle.
         """
-        zeros = [0.0] * len(self.all_joint_names)
 
         self._call_empty_service('/gazebo/pause_physics', self._pause_srv)
         try:
@@ -398,7 +418,7 @@ class MyGurdySingleLegEnv(gym.Env):
                     model_name="gurdy",
                     urdf_param_name="robot_description",
                     joint_names=self.all_joint_names,
-                    joint_positions=zeros)
+                    joint_positions=NEUTRAL_POSE)
                 if not resp.success:
                     rospy.logerr("/gazebo/set_model_configuration failed: %s",
                                  resp.status_message)
@@ -407,7 +427,7 @@ class MyGurdySingleLegEnv(gym.Env):
 
             # Without this the controllers would drive the joints straight
             # back to their previous targets once physics resumes
-            self.move_all_joints(zeros)
+            self.move_all_joints(NEUTRAL_POSE)
         finally:
             # Always unpause, or the sim-time sleep below would never return
             self._call_empty_service('/gazebo/unpause_physics', self._unpause_srv)
@@ -632,7 +652,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         elif action == 1: # Tripod gait - set 1 backward, set 2 forward
             new_joints = [0.0, -0.3, 0.0, -0.3, 0.0, -0.3]  # Legs 2,4,6 up, others normal
         elif action == 2: # Stand still
-            new_joints = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]     # All legs neutral
+            new_joints = list(NEUTRAL_POSE[:6])             # All legs neutral
         elif action == 3: # Wave pattern - front to back
             new_joints = [-0.3, -0.2, -0.1, 0.0, 0.0, 0.0]  # Wave pattern
         elif action == 4: # Wave pattern - back to front
