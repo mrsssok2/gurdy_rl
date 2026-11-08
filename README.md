@@ -80,6 +80,33 @@ the joint tracking error after every action. It ignores the env's own episode
 end (stuck, goal, step limit) and stops only on a fall or after N cycles.
 `test_gait.py --poses` prints the foot poses and their IK joint angles.
 
+## Evaluating DQN checkpoints
+
+`evaluate.py` runs saved DQN models greedily (epsilon 0) through the same walk env
+and episode end as training (goal, fall, stuck, or `nsteps`). For each episode
+it prints the forward distance, steps, how the episode ended, falls and invalid
+lifts, then a summary. Training saves a checkpoint every `save_model_freq`
+episodes, as `output/dqn/gurdy_dqn_model_<episode>`.
+
+Start Gazebo (terminal 1) and the controllers (`start_controllers.launch`,
+terminal 2) as in Baseline. Training must not be running, because the two
+would share one simulation. Then, in terminal 3:
+
+```bash
+cd catkin_ws
+source devel/setup.bash
+# one checkpoint, 5 episodes
+rosrun my_gurdy_description evaluate.py output/dqn/gurdy_dqn_model_100 --episodes 5
+# every checkpoint in output/dqn, 3 episodes each, ranked best first
+rosrun my_gurdy_description evaluate.py --all
+# also save every episode as CSV
+rosrun my_gurdy_description evaluate.py --all --episodes 5 --csv output/dqn/eval.csv
+```
+
+The ranking sorts by mean forward distance, then fewer falls, then fewer
+steps. Compare it with the Baseline: the scripted `--wave-all` gait reaches
+the 0.5 m goal in about 290 steps. Paths are relative to the package.
+
 ## Voice control demo
 
 Speak a Hindi or Hinglish command on Windows and Gurdy walks in Gazebo. The

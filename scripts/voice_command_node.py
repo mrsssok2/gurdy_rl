@@ -35,33 +35,17 @@ import threading
 
 import gym
 import numpy as np
-import rospkg
 import rospy
 from std_msgs.msg import String
 
 import env as gurdy_env
 import voice_walk
+from dqn_policy import greedy_action, load_model, resolve_model_path
 from test_gait import gait as gait_moves
 
 COMMAND_TOPIC = "/gurdy/voice_command"
 FEEDBACK_TOPIC = "/gurdy/voice_feedback"
 TRANSCRIPT_TOPIC = "/gurdy/voice_transcript"
-
-
-def dqn_features(observation):
-    """
-    DQN input for an env observation. Must match extract_state_features in
-    train_gurdy_dqn.py, which can't be imported here because it opens the
-    training plots on import.
-    """
-    obs = np.asarray(observation, dtype=np.float32)
-    return np.concatenate([
-        obs[gurdy_env.OBS_LEG_CODES],
-        [obs[gurdy_env.OBS_FORWARD_VELOCITY] / 2.0],
-        [obs[gurdy_env.OBS_FORWARD_DISTANCE] / 10.0],
-        [obs[gurdy_env.OBS_HEAD_HEIGHT] / 0.3],
-        obs[gurdy_env.OBS_LAST_ACTION.start:gurdy_env.OBS_SIZE],
-    ]).astype(np.float32)
 
 
 class EnvRobot(object):
@@ -110,7 +94,7 @@ class VoiceCommandNode(object):
     def __init__(self):
         rospy.init_node("gurdy_voice_command")
         self.reset_on_fall = rospy.get_param("~reset_on_fall", True)
-        self.model_path = self._resolve(rospy.get_param("~rl_model_path", ""))
+        self.model_path = resolve_model_path(rospy.get_param("~rl_model_path", ""))
         self.model = None
         self.model_error = None
 
@@ -141,12 +125,6 @@ class VoiceCommandNode(object):
             self.load_model()
         rospy.loginfo("Voice command node ready on %s", COMMAND_TOPIC)
 
-    @staticmethod
-    def _resolve(path):
-        if path and not os.path.isabs(path):
-            path = os.path.join(rospkg.RosPack().get_path("my_gurdy_description"), path)
-        return path
-
     def load_model(self):
         """Load the Keras model once. Returns it, or None with model_error set."""
         if self.model is not None or self.model_error is not None:
@@ -157,8 +135,7 @@ class VoiceCommandNode(object):
             self.model_error = "RL model not found: %s" % self.model_path
         else:
             try:
-                from tensorflow import keras
-                self.model = keras.models.load_model(self.model_path)
+                self.model = load_model(self.model_path)
                 rospy.loginfo("Loaded RL model %s", self.model_path)
             except Exception as e:  # any load failure means scripted fallback
                 self.model_error = "could not load the RL model: %s" % e
@@ -167,9 +144,7 @@ class VoiceCommandNode(object):
         return self.model
 
     def greedy_action(self):
-        state = dqn_features(self.robot.observation).reshape(1, -1)
-        q_values = self.model.predict(state, verbose=0)[0]
-        return int(np.argmax(q_values))
+        return greedy_action(self.model, self.robot.observation)
 
     def publish(self, cmd, **fields):
         fields["action"] = cmd.get("action")

@@ -127,6 +127,7 @@ def install_stubs():
 
 install_stubs()
 import voice_command_node as node_mod  # noqa: E402
+import dqn_policy  # noqa: E402
 
 
 # --- tests ----------------------------------------------------------------
@@ -251,7 +252,7 @@ class NodeTest(unittest.TestCase):
 class FeatureTest(unittest.TestCase):
     def test_matches_training_features(self):
         obs = np.arange(35, dtype=np.float32) / 35.0
-        features = node_mod.dqn_features(obs)
+        features = dqn_policy.dqn_features(obs)
         expected = np.concatenate([obs[0:6], [obs[6] / 2.0], [obs[7] / 10.0],
                                    [obs[8] / 0.3], obs[9:35]])
         self.assertEqual(features.shape, (35,))
