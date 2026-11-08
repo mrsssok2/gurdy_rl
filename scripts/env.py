@@ -54,6 +54,7 @@ NEUTRAL_UPPER_LEG = -1.0
 NEUTRAL_LOWER_LEG = -0.6
 # Order matches all_joint_names: upper legs M1-M6, then lower legs M1-M6
 NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
+UPPER_LEG_LIMITS = (-1.55, 0.0)
 
 class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
@@ -663,8 +664,8 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.action_space = spaces.Discrete(5)
         
         # Define observation space
-        # Joint positions (6), signed forward (x) velocity, signed forward (x)
-        # distance from start, head height. Velocity and distance go negative
+        # Upper-leg offsets from NEUTRAL_POSE (6), signed forward (x)
+        # velocity, signed forward (x) distance from start, head height. Velocity and distance go negative
         # when the robot moves backwards.
         low = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -2.0, -10.0, 0.0])
         high = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 2.0, 10.0, 1.0])
@@ -710,21 +711,27 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Args:
             action (int): Action index to execute
         """
-        # Different tripod gaits for hexapod
+        # Upper-leg offsets from NEUTRAL_POSE (negative = leg swung further
+        # out and up). The lower legs stay at their neutral angle, so stepping
+        # never straightens the legs.
         if action == 0:   # Tripod gait - set 1 forward, set 2 backward
-            new_joints = [-0.3, 0.0, -0.3, 0.0, -0.3, 0.0]  # Legs 1,3,5 up, others normal
+            offsets = [-0.3, 0.0, -0.3, 0.0, -0.3, 0.0]  # Legs 1,3,5 up, others neutral
         elif action == 1: # Tripod gait - set 1 backward, set 2 forward
-            new_joints = [0.0, -0.3, 0.0, -0.3, 0.0, -0.3]  # Legs 2,4,6 up, others normal
+            offsets = [0.0, -0.3, 0.0, -0.3, 0.0, -0.3]  # Legs 2,4,6 up, others neutral
         elif action == 2: # Stand still
-            new_joints = list(NEUTRAL_POSE[:6])             # All legs neutral
+            offsets = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]     # All legs neutral
         elif action == 3: # Wave pattern - front to back
-            new_joints = [-0.3, -0.2, -0.1, 0.0, 0.0, 0.0]  # Wave pattern
+            offsets = [-0.3, -0.2, -0.1, 0.0, 0.0, 0.0]  # Wave pattern
         elif action == 4: # Wave pattern - back to front
-            new_joints = [0.0, 0.0, 0.0, -0.1, -0.2, -0.3]  # Wave pattern
-        
+            offsets = [0.0, 0.0, 0.0, -0.1, -0.2, -0.3]  # Wave pattern
+
+        lower, upper = UPPER_LEG_LIMITS
+        new_joints = [min(upper, max(lower, neutral + offset))
+                      for neutral, offset in zip(NEUTRAL_POSE[:6], offsets)]
+
         # Execute joint movement
         self.move_joints(new_joints)
-        self.joint_positions = new_joints
+        self.joint_positions = offsets
         
         # Wait for the robot to execute the movement
         time.sleep(0.1)
@@ -829,7 +836,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         height_ratio = head_height / max(0.01, self.initial_height)  # Avoid division by zero
         stability_reward = self.UPRIGHT_BONUS * min(1.0, height_ratio)  # Cap at 1.0
 
-        # Penalty for excessive joint movement (energy efficiency)
+        # Penalty for moving the legs away from neutral (energy efficiency)
         energy_penalty = -0.05 * sum([abs(angle) for angle in observations[0:6]])
 
         # Penalty for episode ending with little forward progress
@@ -849,20 +856,23 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     
     def get_joint_angles(self):
         """
-        Retrieve joint angles from the robot's joint states
-        
+        Retrieve upper-leg joint angles as offsets from NEUTRAL_POSE, the same
+        frame the actions use. 0 means the leg is at its neutral angle, so the
+        observation bounds, the state buckets in the training scripts and the
+        energy penalty all keep working with a bent neutral stance.
+
         Returns:
-            list: Angles of all joints
+            list: Offsets of the 6 upper-leg joints from neutral (0 if missing)
         """
         joint_states = self._joint_states
-        angles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Default zeros
-        
+        angles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Default: at neutral
+
         for i, name in enumerate(self.joint_names):
             for j, joint_name in enumerate(joint_states.name):
                 if joint_name == name:
-                    angles[i] = joint_states.position[j]
+                    angles[i] = joint_states.position[j] - NEUTRAL_POSE[i]
                     break
-        
+
         return angles
     
     def get_forward_velocity(self):
