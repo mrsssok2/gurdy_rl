@@ -72,7 +72,7 @@ class MyGurdySingleLegEnv(gym.Env):
     # |roll| and |pitch| below STABLE_TILT_DEG, and base speeds below the limits
     # below, held for STABLE_HOLD_TIME s. If that doesn't happen within
     # STABLE_TIMEOUT s (sim time) the reset is redone, up to RESET_MAX_TRIES.
-    STABLE_TILT_DEG = 10.0
+    STABLE_TILT_DEG = 15.0
     STABLE_MAX_LINEAR_SPEED = 0.01    # m/s
     STABLE_MAX_ANGULAR_SPEED = 0.1    # rad/s
     STABLE_HOLD_TIME = 0.3            # s
