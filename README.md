@@ -357,9 +357,11 @@ turn, so it lines up by stepping sideways:
    detection of the colour, and of the shape if one was asked for.
 2. If it isn't there, count a miss. After `lost_checks` misses in a row,
    stop: "not_found" if it was never seen, else "lost".
-3. Stop as "reached" if the target covers `close_area` of the image, or if
-   the bottom of the image cuts it off. The bottom row sees the ground
-   ~0.13 m ahead, so a cut-off object is closer than that.
+3. Stop as "reached" if the target covers `close_area` of the image and is
+   within `bearing_tol_deg` of the centre. If it is close but off-centre,
+   side-step first (step 4). A target cut off by the bottom of the image
+   also counts as reached: the bottom row sees the ground ~0.13 m ahead,
+   so a cut-off object is closer than that.
 4. If it is more than `bearing_tol_deg` off centre, side-step toward it for
    1-3 cycles (~2.6 cm each), sized by its estimated sideways offset.
    Otherwise walk forward 1 cycle (~2.7 cm), or 2 while it is still small.
@@ -373,8 +375,8 @@ Measured in Gazebo through the voice client:
 
 | Command | Result |
 |---------|--------|
-| laal gend ke paas jao | reached, 6 moves, 104 steps, 1 side-step; stopped ~0.16 m from the ball |
-| neele dabbe ke paas jao (29° left) | reached, 5 moves, 256 steps (4 side-step moves, then forward) |
+| laal gend ke paas jao | reached, 6 moves, 104 steps, 1 side-step; stopped ~0.16 m from the ball, 1.6° off centre |
+| neele dabbe ke paas jao (29° left) | reached, 5 moves, 264 steps, all side-steps; the last one because the box was close but 12.4° off, so it stopped at 5.3° |
 | hare dabbe ke paas jao (29° right) | reached, 13 moves, 384 steps |
 | hari gend ke paas jao | not_found, no steps ("Mujhe hari gend nahi dikh rahi") |
 | ruko during an approach | stopped |

@@ -264,6 +264,29 @@ class TestApproach(unittest.TestCase):
         far, _, _ = approach([BALL], "red", config=va.Config(close_area={"ball": 0.03}))
         self.assertGreater(near["forward_m"], far["forward_m"])
 
+    def test_close_but_off_centre_side_steps_first(self):
+        """Close enough at the start but ~17 deg left: not reached until centred."""
+        ball = ("red", "ball", 0.35, 0.05, 0.06)
+        robot = FakeRobot(x=0.13)
+        first = FakeCamera(robot, [ball])()["objects"][0]
+        self.assertGreaterEqual(first["area_fraction"], va.CLOSE_AREA["ball"])
+        self.assertGreater(first["bearing_deg"], va.BEARING_TOL_DEG)
+        result, robot, _ = approach([ball], "red", "ball", robot=robot)
+        self.assertEqual(result["status"], va.REACHED)
+        self.assertEqual(robot.actions[0][0], "walk_left")
+        self.assertGreater(result["moves"], 0)
+        self.assertLessEqual(abs(result["target"]["bearing_deg"]), va.BEARING_TOL_DEG)
+
+    def test_reached_is_centred_unless_cut_off(self):
+        """With a threshold met from the start, every reached result is centred."""
+        for ball in (("red", "ball", 0.4, 0.15, 0.06), ("red", "ball", 0.4, -0.12, 0.06)):
+            result, robot, _ = approach([ball], "red",
+                                        config=va.Config(close_area={"ball": 0.001}))
+            self.assertEqual(result["status"], va.REACHED, ball)
+            self.assertGreater(result["moves"], 0, ball)
+            self.assertTrue(all(a[0] != "walk_forward" for a in robot.actions), ball)
+            self.assertLessEqual(abs(result["target"]["bearing_deg"]), va.BEARING_TOL_DEG)
+
     def test_cut_off_at_the_bottom_is_reached(self):
         """Even with an area threshold it can't reach, a target cut off by the
         bottom of the image (closer than ~0.13 m) is reached."""

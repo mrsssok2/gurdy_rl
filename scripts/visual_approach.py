@@ -11,10 +11,12 @@ Gurdy cannot turn, so it lines up with the target by stepping sideways:
         target    the largest detection of the colour (and shape, if asked)
                   not seen: count a miss; after LOST_CHECKS misses in a row
                   stop (NOT_FOUND if it was never seen, else LOST)
-        close?    area_fraction >= close_area[shape], or the target is cut
-                  off by the bottom of the image (clipped_bottom: the
-                  bottom row sees the ground ~0.13 m ahead, so it is
-                  closer than that)  -> REACHED
+        reached?  close (area_fraction >= close_area[shape]) AND centred
+                  (|bearing| <= bearing_tol_deg), or cut off by the bottom
+                  of the image (clipped_bottom: the bottom row sees the
+                  ground ~0.13 m ahead, so it is closer than that)
+                  -> REACHED. Close but off-centre falls through to a
+                  side-step.
         |bearing| > bearing_tol_deg: side-step toward it (left if the
                   bearing is positive), 1-3 side-step cycles (~2.6 cm each)
                   depending on the estimated sideways offset
@@ -156,12 +158,15 @@ def run_approach(robot, gaits, look, color, shape=None, config=None,
             continue
         seen, misses, last = True, 0, target
         close_area = config.close_area_for(shape or target["shape"])
-        if target["area_fraction"] >= close_area or target.get("clipped_bottom"):
+        bearing = target["bearing_deg"]
+        centred = abs(bearing) <= config.bearing_tol_deg
+        close = target["area_fraction"] >= close_area
+        if (close and centred) or target.get("clipped_bottom"):
             status = REACHED
             break
 
-        bearing = target["bearing_deg"]
-        if abs(bearing) > config.bearing_tol_deg:
+        # Off-centre (close or not): side-step toward it first
+        if not centred:
             action = "walk_left" if bearing > 0 else "walk_right"
             cycles = side_cycles(target)
             position = robot.lateral if action == "walk_left" else (lambda: -robot.lateral())
