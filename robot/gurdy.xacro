@@ -39,6 +39,10 @@
     <xacro:property name="joint_effort" value="1.0"/>
     <!-- rad/s. 0.005 rad/s would need ~5 min for a 1.5 rad stroke. -->
     <xacro:property name="joint_velocity" value="5.0"/>
+    <!-- Passive joint dynamics on all 12 leg joints: viscous damping in
+         N*m*s/rad and Coulomb friction in N*m, to bleed off oscillation. -->
+    <xacro:property name="joint_damping" value="0.05"/>
+    <xacro:property name="joint_friction" value="0.01"/>
 
     <gazebo>
     <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
@@ -236,6 +240,7 @@
             <child link="lowerleg_M${number}_link"/>
             <origin xyz="0 0.0095 0.06" rpy="0 0 3.14159"/>
             <limit lower="-2.9" upper="1.5708" effort="${joint_effort}" velocity="${joint_velocity}"/>
+            <dynamics damping="${joint_damping}" friction="${joint_friction}"/>
             <axis xyz="0 1 0"/>
         </joint>
     </xacro:macro>
@@ -309,6 +314,7 @@
             <child link="upperleg_M${number}_link"/>
             <xacro:insert_block name="origin" />
             <limit lower="-1.55" upper="0.0" effort="${joint_effort}" velocity="${joint_velocity}"/>
+            <dynamics damping="${joint_damping}" friction="${joint_friction}"/>
             <axis xyz="0 1 0"/>
         </joint>
         
