@@ -51,14 +51,14 @@ def extract_state_features(observations):
     
     Args:
         observations (np.array): Array of observations 
-                                [joint_angles (6), forward_velocity, forward_distance, head_height]
+                                [group state flags (6), forward_velocity, forward_distance, head_height]
     
     Returns:
         np.array: Feature array for DQN
     """
     # We'll use numeric values directly for DQN
-    # Extract joint positions
-    joint_angles = observations[0:6]
+    # Group target-state flags (extended, retracted) for FRONT, BACK, SIDE
+    group_flags = np.asarray(observations[0:6], dtype=np.float32)
     
     # Extract signed forward velocity, signed forward distance, and height
     linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
@@ -66,14 +66,13 @@ def extract_state_features(observations):
     head_height = observations[8]
     
     # Normalize the values
-    normalized_joints = joint_angles / 1.5  # Assuming max joint angle is about 1.5
     normalized_speed = np.array([linear_speed / 2.0])  # Assuming max speed is about 2.0
     normalized_distance = np.array([distance / 10.0])  # Assuming max distance is about 10.0
     normalized_height = np.array([head_height / 0.3])  # Assuming max height is about 0.3
     
     # Combine features
     return np.concatenate([
-        normalized_joints, 
+        group_flags,  # already 0/1
         normalized_speed, 
         normalized_distance, 
         normalized_height

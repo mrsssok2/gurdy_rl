@@ -52,42 +52,25 @@ def convert_obs_to_state(observations, reference_height):
     
     Args:
         observations (np.array): Array of observations 
-                                [joint_angles (6), forward_velocity, forward_distance, head_height]
+                                [group state flags (6), forward_velocity, forward_distance, head_height]
         reference_height (float): Settled head height after the last reset;
                                   height buckets are relative to it
     
     Returns:
         str: State string representation
     """
-    # Extract joint positions
-    joint1_angle = observations[0]
-    joint2_angle = observations[1]
-    joint3_angle = observations[2]
-    joint4_angle = observations[3]
-    joint5_angle = observations[4]
-    joint6_angle = observations[5]
+    # Current target state of each leg group: NEUTRAL, EXTENDED or RETRACTED
+    # for FRONT, BACK and SIDE (see env.ACTIONS)
+    front_state, back_state, side_state = env.group_states_from_obs(observations)
     
     # Extract signed forward velocity, signed forward distance, and height
     linear_speed = observations[6]  # Forward (x) velocity, negative = backwards
     distance = observations[7]      # Forward (x) distance from start, negative = behind
     head_height = observations[8]
     
-    # Discretize joint angles (simplified for state representation)
-    # We'll use a pattern-based approach for the 6 legs. Angles are hip
-    # offsets from the neutral pose; the gait actions only use positive
-    # offsets (+0.4, thigh swung down toward vertical).
-    if joint1_angle > 0.2 and joint3_angle > 0.2 and joint5_angle > 0.2:
-        joint_pattern = "PATTERN1"  # Legs 1,3,5 hips down
-    elif joint2_angle > 0.2 and joint4_angle > 0.2 and joint6_angle > 0.2:
-        joint_pattern = "PATTERN2"  # Legs 2,4,6 hips down
-    elif all(abs(angle) < 0.1 for angle in observations[0:6]):
-        joint_pattern = "NEUTRAL"   # All legs neutral
-    elif joint1_angle > 0.2 and joint2_angle > 0.2:
-        joint_pattern = "FRONT_UP"  # Legs 1,2 hips down
-    elif joint5_angle > 0.2 and joint6_angle > 0.2:
-        joint_pattern = "BACK_UP"   # Legs 5,6 hips down
-    else:
-        joint_pattern = "OTHER"     # Other pattern
+    # The group states identify the robot's pose exactly, since each action
+    # sets one group's state
+    joint_pattern = "F-%s_B-%s_S-%s" % (front_state, back_state, side_state)
     
     # Discretize signed forward velocity
     if linear_speed < -0.05:

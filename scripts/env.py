@@ -101,6 +101,34 @@ ACTIONS = [
     (None, NEUTRAL),       # 6 STAND
 ]
 
+# Observation layout (length 9). The first six entries encode each group's
+# current target state as two 0/1 flags, (extended, retracted); both 0 means
+# NEUTRAL. Flags rather than one ordinal code, since the three states differ
+# along two axes (foot height and reach).
+OBS_GROUP_FLAGS = slice(0, 6)
+OBS_FORWARD_VELOCITY = 6
+OBS_FORWARD_DISTANCE = 7
+OBS_HEAD_HEIGHT = 8
+
+def group_state_flags(group_states):
+    """Encode {group: state} as the 6 observation flags, in GROUP_NAMES order."""
+    flags = []
+    for name in GROUP_NAMES:
+        state = group_states[name]
+        flags += [1.0 if state == EXTENDED else 0.0,
+                  1.0 if state == RETRACTED else 0.0]
+    return flags
+
+def group_states_from_obs(observations):
+    """Decode the observation flags back to a state name per group, in GROUP_NAMES order."""
+    flags = observations[OBS_GROUP_FLAGS]
+    states = []
+    for i in range(len(GROUP_NAMES)):
+        extended, retracted = flags[2 * i], flags[2 * i + 1]
+        states.append(EXTENDED if extended > 0.5 else
+                      RETRACTED if retracted > 0.5 else NEUTRAL)
+    return states
+
 class MyGurdySingleLegEnv(gym.Env):
     """Superclass for Gurdy robot environments"""
     
@@ -587,7 +615,7 @@ class MyGurdySingleLegEnv(gym.Env):
         Get observation
         
         Returns:
-            np.array: [joint_angles, forward_velocity, forward_distance, head_height]
+            np.array: [group state flags (6), forward_velocity, forward_distance, head_height]
         """
         raise NotImplementedError()
     
@@ -675,11 +703,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         self.action_space = spaces.Discrete(len(ACTIONS))
         
         # Define observation space
-        # Upper-leg offsets from NEUTRAL_POSE (6), signed forward velocity,
-        # signed forward distance from start, head height. Velocity and
-        # distance go negative when the robot moves backwards.
-        low = np.array([-0.5, -0.5, -0.5, -0.5, -0.5, -0.5, -2.0, -10.0, 0.0])
-        high = np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 2.0, 10.0, 1.0])
+        # Group target-state flags (6, see OBS_GROUP_FLAGS), signed forward
+        # velocity, signed forward distance from start, head height. Velocity
+        # and distance go negative when the robot moves backwards.
+        low = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, -10.0, 0.0])
+        high = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 10.0, 1.0])
         self.observation_space = spaces.Box(low=low, high=high, dtype=np.float32)
         
         # Initialize state variables
@@ -767,11 +795,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Define robot observations
         
         Returns:
-            np.array: [joint_angles, forward_velocity, forward_distance, head_height]
+            np.array: [group state flags (6), forward_velocity, forward_distance, head_height]
         """
-        # Get joint angles
-        joint_angles = self.get_joint_angles()
-        
+
         # Signed forward velocity from odometry (negative = moving backwards)
         forward_velocity = self.get_forward_velocity()
         
@@ -781,10 +807,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         # Get head height
         head_height = self.head_height
         
-        # Return observations: 6 joint positions + forward velocity + forward distance + height
-        return np.array([joint_angles[0], joint_angles[1], joint_angles[2], 
-                         joint_angles[3], joint_angles[4], joint_angles[5],
-                         forward_velocity, forward_distance, head_height])
+        # Return observations: 6 group state flags + forward velocity +
+        # forward distance + height. The flags are the commanded targets; the
+        # legs may lag or sag short of them.
+        return np.array(group_state_flags(self.group_states) +
+                        [forward_velocity, forward_distance, head_height])
     
     def _is_done(self, observations, fallen):
         """
@@ -841,7 +868,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
             float: Calculated reward
         """
         # Extract values from observations
-        head_height = observations[8]
+        head_height = observations[OBS_HEAD_HEIGHT]
 
         # Big penalty if the robot has fallen
         if fallen:
@@ -862,8 +889,11 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         height_ratio = head_height / max(0.01, self.initial_height)  # Avoid division by zero
         stability_reward = self.UPRIGHT_BONUS * min(1.0, height_ratio)  # Cap at 1.0
 
-        # Penalty for moving the legs away from neutral (energy efficiency)
-        energy_penalty = -0.05 * sum([abs(angle) for angle in observations[0:6]])
+        # Penalty for moving the legs away from neutral (energy efficiency):
+        # 0.05 per radian of hip offset, as before, i.e. two hips at
+        # GAIT_OFFSET for each group that is not NEUTRAL
+        groups_moved = sum(observations[OBS_GROUP_FLAGS])
+        energy_penalty = -0.05 * 2 * GAIT_OFFSET * groups_moved
 
         # Penalty for episode ending with little forward progress
         terminal_penalty = 0
@@ -879,27 +909,6 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         reward = progress_reward + stability_reward + energy_penalty + terminal_penalty + completion_bonus
         
         return reward
-    
-    def get_joint_angles(self):
-        """
-        Retrieve upper-leg joint angles as offsets from NEUTRAL_POSE, the same
-        frame the actions use. 0 means the leg is at its neutral angle, so the
-        observation bounds, the state buckets in the training scripts and the
-        energy penalty all keep working with a bent neutral stance.
-
-        Returns:
-            list: Offsets of the 6 upper-leg joints from neutral (0 if missing)
-        """
-        joint_states = self._joint_states
-        angles = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Default: at neutral
-
-        for i, name in enumerate(self.joint_names):
-            for j, joint_name in enumerate(joint_states.name):
-                if joint_name == name:
-                    angles[i] = joint_states.position[j] - NEUTRAL_POSE[i]
-                    break
-
-        return angles
     
     def get_forward_velocity(self):
         """
