@@ -34,7 +34,7 @@ roslaunch my_gurdy_description ppo_launch.launch
 
 roslaunch my_gurdy_description sac_launch.launch
 
-roslaunch my_gurdy_description ppo_launch.launch
+roslaunch my_gurdy_description policy_gradient.launch
 
 ```
 
