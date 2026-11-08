@@ -37,15 +37,17 @@ class SARSA:
             
         return self.q[state][action]
 
-    def learnQ(self, state, action, reward, next_state, next_action):
+    def learnQ(self, state, action, reward, next_state, next_action, done=False):
         """
-        Update Q-value using SARSA update rule
+        Update Q-value using SARSA update rule.
+        If done, next_state is terminal and the target is just the reward.
         """
         # Get current Q-value
         oldv = self.getQ(state, action)
         
-        # Get next Q-value from next state and action (SARSA)
-        next_q = self.getQ(next_state, next_action)
+        # Get next Q-value from next state and action (SARSA);
+        # a terminal transition has nothing to bootstrap from
+        next_q = 0.0 if done else self.getQ(next_state, next_action)
         
         # Apply a stronger update for states with "FALLEN" in them
         if "FALLEN" in state or "UNSTABLE" in state:

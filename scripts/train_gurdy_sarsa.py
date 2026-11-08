@@ -363,8 +363,8 @@ def main():
             # Choose next action based on new state (SARSA)
             next_action = sarsa_agent.chooseAction(new_state)
             
-            # Learn (SARSA update)
-            sarsa_agent.learnQ(state, action, reward, new_state, next_action)
+            # Learn (SARSA update); don't bootstrap from new_state when the episode has ended
+            sarsa_agent.learnQ(state, action, reward, new_state, next_action, done)
             
             # Update state, action, and reward
             state = new_state
