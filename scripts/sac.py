@@ -37,8 +37,9 @@ class SAC:
         if auto_alpha:
             self.log_alpha = tf.Variable(0.0, dtype=tf.float32)
             self.alpha = tf.exp(self.log_alpha)
-            # Target entropy is -|A| (negative action dimension)
-            self.target_entropy = -np.float32(action_size)
+            # Target entropy for discrete actions: 98% of the maximum entropy
+            # log|A| (the -|A| heuristic is for continuous action spaces)
+            self.target_entropy = np.float32(0.98 * np.log(action_size))
             self.alpha_optimizer = keras.optimizers.Adam(learning_rate=3e-4)
         else:
             self.alpha = tf.constant(alpha)
@@ -132,13 +133,14 @@ class SAC:
         if tau is None:
             tau = self.tau
             
-        # Update critic target networks
-        critic_1_weights = [weight * (1 - tau) + target_weight * tau 
+        # Update critic target networks: target = tau * online + (1 - tau) * target
+        # (tau=1.0 copies the online weights into the target)
+        critic_1_weights = [tau * weight + (1 - tau) * target_weight
                           for weight, target_weight in 
                           zip(self.critic_1.get_weights(), self.critic_1_target.get_weights())]
         self.critic_1_target.set_weights(critic_1_weights)
         
-        critic_2_weights = [weight * (1 - tau) + target_weight * tau 
+        critic_2_weights = [tau * weight + (1 - tau) * target_weight
                           for weight, target_weight in 
                           zip(self.critic_2.get_weights(), self.critic_2_target.get_weights())]
         self.critic_2_target.set_weights(critic_2_weights)
@@ -175,15 +177,17 @@ class SAC:
             next_q1 = self.critic_1_target([next_states_tensor, next_action_probs])
             next_q2 = self.critic_2_target([next_states_tensor, next_action_probs])
             
-            # Use min of Q-values to prevent overestimation
-            next_q = tf.minimum(next_q1, next_q2)
+            # Use min of Q-values to prevent overestimation. Critics output
+            # (B, 1); squeeze to (B,) so they line up with rewards/dones,
+            # otherwise q_target and the losses broadcast to (B, B).
+            next_q = tf.squeeze(tf.minimum(next_q1, next_q2), axis=1)
             
-            # Compute targets for Q-functions
-            q_target = rewards_tensor + (1 - dones_tensor) * self.gamma * next_q
+            # Compute targets for Q-functions, shape (B,)
+            q_target = tf.stop_gradient(rewards_tensor + (1 - dones_tensor) * self.gamma * next_q)
             
-            # Compute current Q-values
-            q1 = self.critic_1([states_tensor, actions_tensor])
-            q2 = self.critic_2([states_tensor, actions_tensor])
+            # Compute current Q-values, shape (B,)
+            q1 = tf.squeeze(self.critic_1([states_tensor, actions_tensor]), axis=1)
+            q2 = tf.squeeze(self.critic_2([states_tensor, actions_tensor]), axis=1)
             
             # Compute critic losses (mean squared error)
             critic_loss1 = tf.reduce_mean(tf.square(q_target - q1))
@@ -225,8 +229,9 @@ class SAC:
                 # Compute entropy
                 entropy = -tf.reduce_sum(action_probs * tf.math.log(action_probs + 1e-10), axis=1)
                 
-                # Alpha loss: minimize negative entropy plus target entropy * log_alpha
-                alpha_loss = tf.reduce_mean(-self.log_alpha * (entropy + self.target_entropy))
+                # Alpha loss: raise alpha when entropy is below target, lower it
+                # when above (equivalent to -log_alpha * (log_pi + target_entropy))
+                alpha_loss = tf.reduce_mean(self.log_alpha * tf.stop_gradient(entropy - self.target_entropy))
             
             # Get gradients and update alpha
             alpha_grads = tape.gradient(alpha_loss, [self.log_alpha])
