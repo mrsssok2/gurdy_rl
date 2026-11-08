@@ -8,24 +8,33 @@
     <xacro:property name="foot_mu2" value="10.0"/>
     <xacro:property name="foot_radius" value="0.008"/>
 
-    <!-- Masses and inertias. Each inertia is computed from that link's
-         collision geometry with the solid-body formulas, about the link's
-         centre of mass:
-           solid cylinder (axis z): ixx = iyy = m(3r^2 + h^2)/12, izz = m r^2/2
-           solid sphere:            ixx = iyy = izz = 2 m r^2/5
-           solid box (a, b, c):     ixx = m(b^2 + c^2)/12, etc.
+    <!-- Masses and inertias. The masses are realistic; the head inertia is
+         computed from its collision geometry with the solid-cylinder formula
+         about its centre of mass:
+           ixx = iyy = m(3r^2 + h^2)/12, izz = m r^2/2
          head_link   0.300 kg  cylinder r=0.05 h=0.04 -> 2.275e-4, 3.75e-4
-         camera_link 0.001 kg  box 0.01^3             -> 1.667e-8 each
-         upperleg    0.030 kg  cylinder r=0.0025 h=0.06 -> 9.047e-6, 9.375e-8
-         lowerleg    0.030 kg  cylinder r=0.0015 h=0.06 -> 9.017e-6, 3.375e-8
-         foot        0.010 kg  sphere r=0.008          -> 2.56e-7 each
+         camera_link 0.001 kg  box 0.01^3
+         upperleg    0.030 kg  cylinder r=0.0025 h=0.06
+         lowerleg    0.030 kg  cylinder r=0.0015 h=0.06
+         foot        0.010 kg  sphere r=0.008
          Total: 0.301 + 6 x 0.070 = 0.721 kg, ~7.07 N of weight.
-         The old 0.01 kg links had inertias that matched neither their mass
-         nor their geometry (e.g. upper leg ixx 3.0e-5, 10x the formula).
-         The tiny izz values are spin about each leg's own long axis, which
-         no joint drives; what the hip and knee servos see is the inertia
-         about the joint axis (y), which adds m d^2 for each link's offset:
-         ~4.3e-4 kg m^2 at a straight hip, ~7.2e-5 kg m^2 at the knee. -->
+
+         The thin links' inertias are INFLATED ON PURPOSE for solver
+         stability, not computed from their geometry. The exact formulas give
+         very lopsided tensors (lower leg ixx 9.0e-6 vs izz 3.4e-8, a ~270:1
+         ratio; foot 2.6e-7; camera 1.7e-8), which ODE's iterative solver
+         handles badly and which is the likely cause of the blow-up seen with
+         them (every joint at an exact multiple of pi with zero std, odom all
+         zeros, the legs gone from Gazebo). Instead they use a
+         floor with a ratio of at most 10:1:
+           upperleg, lowerleg  ixx = iyy = 1e-5, izz = 1e-6
+           foot, camera        1e-6 on all axes
+         The legs' ixx/iyy are only ~10% above the exact values, so the
+         dynamics the hip and knee servos see (inertia about the joint y axis,
+         dominated by the m d^2 offset terms: ~4.3e-4 kg m^2 at a straight
+         hip, ~7.2e-5 kg m^2 at the knee) are essentially unchanged; izz is
+         spin about each leg's own long axis, which no joint drives. Do not
+         "correct" these back to the formula values. -->
 
     <!-- Joint limits. Worst-case static torque, one leg holding the whole
          robot (7.07 N) at full 0.12 m reach: ~0.85 N*m (hip), ~0.42 N*m
@@ -108,7 +117,8 @@
         <inertial>
             <origin xyz="0 0 0" rpy="0 0 0"/>
             <mass value="0.001" />
-            <inertia ixx="1.667e-08" ixy="0.0" ixz="0.0" iyy="1.667e-08" iyz="0.0" izz="1.667e-08"/>
+            <!-- Inflated for solver stability; see the inertia note at the top. -->
+            <inertia ixx="1e-06" ixy="0.0" ixz="0.0" iyy="1e-06" iyz="0.0" izz="1e-06"/>
         </inertial>
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -199,7 +209,8 @@
             <inertial>
                 <origin xyz="0 0 0.03" rpy="0 0 0"/>
                 <mass value="0.03" />
-                <inertia ixx="9.046875e-06" ixy="0.0" ixz="0.0" iyy="9.046875e-06" iyz="0.0" izz="9.375e-08"/>
+                <!-- Inflated for solver stability; see the inertia note at the top. -->
+                <inertia ixx="1e-05" ixy="0.0" ixz="0.0" iyy="1e-05" iyz="0.0" izz="1e-06"/>
             </inertial>
             <collision>
                 <origin xyz="0 0 0.03" rpy="0 0 0"/>
@@ -221,7 +232,8 @@
             <inertial>
                 <origin xyz="0 0 0.03" rpy="0 0 0"/>
                 <mass value="0.03" />
-                <inertia ixx="9.016875e-06" ixy="0.0" ixz="0.0" iyy="9.016875e-06" iyz="0.0" izz="3.375e-08"/>
+                <!-- Inflated for solver stability; see the inertia note at the top. -->
+                <inertia ixx="1e-05" ixy="0.0" ixz="0.0" iyy="1e-05" iyz="0.0" izz="1e-06"/>
             </inertial>
             <collision>
                 <origin xyz="0 0 0.03" rpy="0 0 0"/>
@@ -251,7 +263,8 @@
             <inertial>
                 <origin xyz="0 0 0" rpy="0 0 0"/>
                 <mass value="0.01" />
-                <inertia ixx="2.56e-07" ixy="0.0" ixz="0.0" iyy="2.56e-07" iyz="0.0" izz="2.56e-07"/>
+                <!-- Inflated for solver stability; see the inertia note at the top. -->
+                <inertia ixx="1e-06" ixy="0.0" ixz="0.0" iyy="1e-06" iyz="0.0" izz="1e-06"/>
             </inertial>
             <collision>
                 <origin xyz="0 0 0" rpy="0 0 0"/>
