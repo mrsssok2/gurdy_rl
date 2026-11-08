@@ -62,41 +62,43 @@ NEUTRAL_POSE = [NEUTRAL_UPPER_LEG] * 6 + [NEUTRAL_LOWER_LEG] * 6
 UPPER_LEG_LIMITS = (-1.55, 0.0)
 LOWER_LEG_LIMITS = (-2.9, 0.0)
 
-# Gait actions as (upper-leg offsets, lower-leg offsets) from NEUTRAL_POSE,
-# one value per leg M1-M6. Every joint swings only in its leg's radial
-# vertical plane, so a positive hip offset swings the thigh down toward
-# vertical and a positive knee offset unfolds the shin outward. Per leg, from
-# neutral (foot 48 mm below the hip, 19 mm outside it):
-#   hip +0.4, knee +0.4: thigh down, shin keeps its tilt -> foot 23 mm lower
-#       and 6 mm further in. The leg lengthens: it pushes that side up.
-#   hip +0.4 only: the shin tilts further in (66 deg) -> foot 20 mm in,
-#       4 mm lower. Draws the foot toward the body.
-#   knee +0.4 only: the shin tilts less (20 deg) -> foot 20 mm out, 12 mm
-#       lower. Reaches the foot out, and lengthens the leg somewhat.
-# A foot moves only radially, so a planted foot pushes the body along that
-# leg's radial line (foot out = body pushed away from it, foot in = body
-# pulled toward it). Tripod A is legs 1,3,5, tripod B legs 2,4,6.
+# Gait actions, built around the leg layout. Each leg's hip and knee swing
+# only in its radial vertical plane (its "spoke"). Spoke directions in the
+# base frame, with forward = +x:
+#   1 = 210 deg, 2 = 330 deg, 3 = 90 deg, 4 = 150 deg, 5 = 30 deg, 6 = 270 deg
+# The legs pair up into three groups whose spokes are mirror images across
+# the x axis, so their sideways components cancel:
+#   FRONT (5, 2): spokes +-30 deg from +x
+#   BACK  (1, 4): spokes +-30 deg from -x
+#   SIDE  (3, 6): spokes along +-y, no x component
+# Each group is in one of three states, as (hip, knee) offsets from
+# NEUTRAL_POSE. Foot position below / outside the hip:
+#   NEUTRAL   ( 0.0, 0.0): 48 mm down, 19 mm out (the shortest leg)
+#   EXTENDED  (+0.4, +0.4): 71 mm down, 13 mm out. Longer leg, carries load.
+#   RETRACTED (+0.4,  0.0): 52 mm down, -1 mm out. Foot pulled in; 19 mm
+#                           higher than EXTENDED, only 4 mm lower than NEUTRAL.
+# A planted foot that moves in pulls the body toward it along its spoke; one
+# that moves out pushes the body away from it.
+GROUP_NAMES = ("FRONT", "BACK", "SIDE")
+GROUP_LEGS = {"FRONT": (5, 2), "BACK": (1, 4), "SIDE": (3, 6)}
+NEUTRAL, EXTENDED, RETRACTED = "NEUTRAL", "EXTENDED", "RETRACTED"
 GAIT_OFFSET = 0.4
-TRIPOD_A = [1, 0, 1, 0, 1, 0]
-TRIPOD_B = [0, 1, 0, 1, 0, 1]
-NO_LEGS = [0] * 6
-def _scaled(mask):
-    return [GAIT_OFFSET * m for m in mask]
-GAIT_ACTIONS = [
-    # 0 Tripod A: legs 1,3,5 lengthen, lifting the body on that tripod so it
-    #   carries the weight and tripod B unloads or leaves the ground.
-    (_scaled(TRIPOD_A), _scaled(TRIPOD_A)),
-    # 1 Tripod B: the same with legs 2,4,6.
-    (_scaled(TRIPOD_B), _scaled(TRIPOD_B)),
-    # 2 Stand: all joints at NEUTRAL_POSE.
-    (_scaled(NO_LEGS), _scaled(NO_LEGS)),
-    # 3 Push A: tripod A draws its feet in while tripod B reaches its feet
-    #   out and down. B becomes the taller, loaded tripod; its planted feet
-    #   push the body away from them along their radial lines, while A's
-    #   lightly loaded feet slide in.
-    (_scaled(TRIPOD_A), _scaled(TRIPOD_B)),
-    # 4 Push B: the mirror, tripod B draws in while tripod A reaches out.
-    (_scaled(TRIPOD_B), _scaled(TRIPOD_A)),
+GROUP_STATE_OFFSETS = {
+    NEUTRAL: (0.0, 0.0),
+    EXTENDED: (GAIT_OFFSET, GAIT_OFFSET),
+    RETRACTED: (GAIT_OFFSET, 0.0),
+}
+# (group, new state) per action index. Each action changes only its own
+# group's targets; the other groups keep theirs, so the agent builds up a
+# pose over several steps. STAND (group None) puts every group to NEUTRAL.
+ACTIONS = [
+    ("FRONT", EXTENDED),   # 0
+    ("FRONT", RETRACTED),  # 1
+    ("BACK", EXTENDED),    # 2
+    ("BACK", RETRACTED),   # 3
+    ("SIDE", EXTENDED),    # 4
+    ("SIDE", RETRACTED),   # 5
+    (None, NEUTRAL),       # 6 STAND
 ]
 
 class MyGurdySingleLegEnv(gym.Env):
@@ -669,8 +671,8 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         """
         super(MyGurdyWalkEnv, self).__init__()
         
-        # Define action space
-        self.action_space = spaces.Discrete(5)
+        # Define action space: see ACTIONS
+        self.action_space = spaces.Discrete(len(ACTIONS))
         
         # Define observation space
         # Upper-leg offsets from NEUTRAL_POSE (6), signed forward velocity,
@@ -682,6 +684,8 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         
         # Initialize state variables
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        # Current target state of each leg group (see ACTIONS)
+        self.group_states = dict.fromkeys(GROUP_NAMES, NEUTRAL)
         self.distance_moved = 0.0
         self.initial_height = 0.0  # Initial height of the robot
         
@@ -698,8 +702,9 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
     
     def _init_env_variables(self):
         """Initializes variables at the start of each episode"""
-        # Reset state variables
+        # Reset state variables. The reset leaves every joint at NEUTRAL_POSE.
         self.joint_positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        self.group_states = dict.fromkeys(GROUP_NAMES, NEUTRAL)
         self.distance_moved = 0.0
         self._has_fallen = False
         
@@ -723,8 +728,22 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
         Args:
             action (int): Action index to execute
         """
-        # Offsets from NEUTRAL_POSE for all 12 joints; see GAIT_ACTIONS
-        upper_offsets, lower_offsets = GAIT_ACTIONS[action]
+        # Update the target state of the action's group (all groups for
+        # STAND); the other groups keep their current targets
+        group, state = ACTIONS[action]
+        for name in (GROUP_NAMES if group is None else (group,)):
+            self.group_states[name] = state
+
+        # Offsets from NEUTRAL_POSE for all 12 joints, upper legs M1-M6 then
+        # lower legs M1-M6
+        upper_offsets = [0.0] * 6
+        lower_offsets = [0.0] * 6
+        for name, legs in GROUP_LEGS.items():
+            hip, knee = GROUP_STATE_OFFSETS[self.group_states[name]]
+            for leg in legs:
+                upper_offsets[leg - 1] = hip
+                lower_offsets[leg - 1] = knee
+
         targets = [neutral + offset for neutral, offset in
                    zip(NEUTRAL_POSE, upper_offsets + lower_offsets)]
         limits = [UPPER_LEG_LIMITS] * 6 + [LOWER_LEG_LIMITS] * 6
@@ -738,8 +757,7 @@ class MyGurdyWalkEnv(MyGurdySingleLegEnv):
 
         # Execute joint movement
         self.move_all_joints(new_joints)
-        # Observed joint state is the upper-leg offsets only
-        self.joint_positions = list(upper_offsets)
+        self.joint_positions = upper_offsets
         
         # Wait for the robot to execute the movement
         time.sleep(0.1)
