@@ -1,6 +1,6 @@
 # Gurdy: Voice-Controlled Hexapod Robot in Hindi
 
-🎥 **Demo video:** _[add YouTube link here]_ · Code: [README.md](README.md)
+🎥 **Demo video:** [Google Drive](https://drive.google.com/file/d/1QdSBvXtVi8ORKgecSzXtB5uT-qSGm45h/view?usp=sharing) · Code: [README.md](README.md)
 
 ## Problem
 Robots are controlled through English software, keyboards and apps. Farmers, field workers and many other people in India would find it easier to tell a robot what to do in their own language.

@@ -3,7 +3,9 @@
 **Speak in Hindi → Gurdy sees, walks and talks back.**
 A six-legged robot in ROS + Gazebo, controlled by voice in Hindi/Hinglish using **Gnani AI** speech models, with **OpenCV** vision and a walking controller trained with **reinforcement learning (DQN)**.
 
-![Gurdy training with reinforcement learning in Gazebo](docs/images/gurdy_training.gif)
+🎥 **Watch the full demo video:** [Google Drive](https://drive.google.com/file/d/1QdSBvXtVi8ORKgecSzXtB5uT-qSGm45h/view?usp=sharing)
+
+[![Gurdy training with reinforcement learning in Gazebo](docs/images/gurdy_training.gif)](https://drive.google.com/file/d/1QdSBvXtVi8ORKgecSzXtB5uT-qSGm45h/view?usp=sharing)
 
 ![Web dashboard: map, live camera with detections, status, Speak/Stop buttons](docs/images/dashboard_start.png)
 
