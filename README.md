@@ -283,6 +283,60 @@ python -m unittest discover -s scripts/tests
 The vision tests (`scripts/tests/test_vision.py`) need OpenCV and are skipped
 without it; run them in the container, where `python3` has cv2.
 
+### Web dashboard (browser)
+
+`web_dashboard.py` serves the same view as `dashboard.py` to a browser on
+Windows, at http://localhost:8080. It's handier than the Tk window for a screen
+recording and fits 1920x1080. The page has these parts:
+
+- a top-down map with the path, target and heading
+- the live annotated camera as MJPEG
+- status, position, heading, distances, roll / pitch, the lifted leg and the mode
+- the last transcript, command and result
+- the voice client's state and last reply
+- the big **Speak** and red **Stop** buttons. The keys Space and Esc do the same.
+
+It updates over Server-Sent Events at 10 Hz. It uses the same
+`dashboard_state.py` logic and topics as the Tk dashboard and also logs the
+path to `output/demo/`. Both dashboards can run at once.
+
+It needs Flask in the container, once (see `requirements-web.txt`):
+
+```bash
+pip3 install -r ~/catkin_ws/src/my_gurdy_description/requirements-web.txt
+```
+
+Run it in a container terminal while `voice_demo.launch` runs, then open
+http://localhost:8080 in Chrome on Windows:
+
+```bash
+cd catkin_ws
+source devel/setup.bash
+rosrun my_gurdy_description web_dashboard.py
+# _port:=8081 another port (publish it too), _log:=false no CSV log
+```
+
+The `noetic` container must publish port 8080. It was created without published
+ports, so it was recreated from a snapshot with the same mounts and
+environment plus `-p 8080:8080`. Run this from the Ubuntu WSL shell so the
+`/home/mahadev/...` and `/mnt/wslg` paths resolve as before:
+
+```bash
+docker commit noetic noetic_snapshot
+docker rename noetic noetic_old && docker stop noetic_old
+docker run -dit --name noetic -p 8080:8080 \
+  -v /home/mahadev/catkin_ws:/root/catkin_ws \
+  -v /tmp/.X11-unix:/tmp/.X11-unix -v /mnt/wslg:/mnt/wslg \
+  -e DISPLAY=:0 -e WAYLAND_DISPLAY=wayland-0 -e XDG_RUNTIME_DIR=/run/user/1000 \
+  noetic_snapshot bash
+```
+
+`docker exec -it noetic bash` opens terminals as before. To roll back to the
+old container, run `docker stop noetic && docker rename noetic noetic_web &&
+docker rename noetic_old noetic && docker start noetic`. Once the new container
+has proved itself, delete the backup with `docker rm noetic_old && docker rmi
+noetic_snapshot`.
+
 ## Computer vision demo
 
 Gurdy's head camera looks forward along its walking direction (+x), tilted

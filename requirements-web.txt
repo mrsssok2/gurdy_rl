@@ -1,0 +1,5 @@
+# scripts/web_dashboard.py, in the noetic container (Python 3.8):
+#   pip3 install -r requirements-web.txt
+# Flask 3.0.x is the last line that supports Python 3.8. OpenCV (python3-opencv,
+# already in the container) encodes the camera JPEGs; Pillow is the fallback.
+flask==3.0.3

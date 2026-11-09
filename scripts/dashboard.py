@@ -364,42 +364,56 @@ def default_log_path(outdir):
     return os.path.join(outdir, "path_%s.csv" % time.strftime("%Y%m%d_%H%M%S"))
 
 
-def main():
-    import rospy
-    from nav_msgs.msg import Odometry
-    from sensor_msgs.msg import Image
-    from std_msgs.msg import Float64, String
-
-    rospy.init_node("gurdy_dashboard", anonymous=True)
-    import matplotlib
-    matplotlib.use("TkAgg")
-    import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation
-
+def make_state():
+    """A DashboardState with Gurdy's poses and forward direction (from env.py)."""
     import env as gurdy_env
-    state = DashboardState(
+    return DashboardState(
         pose_angles=gurdy_env.POSE_ANGLES,
         lifted_poses=[p for p, (lifted, _) in gurdy_env.POSE_FLAGS.items() if lifted],
         forward_sign=gurdy_env.MyGurdyWalkEnv.FORWARD_SIGN)
-    lock = threading.Lock()
 
-    import rospkg
-    outdir = rospy.get_param("~outdir", "output/demo")
-    if not os.path.isabs(outdir):
-        outdir = os.path.join(rospkg.RosPack().get_path("my_gurdy_description"), outdir)
-    log_path = default_log_path(outdir)
-    log_file = open(log_path, "w", newline="")
-    writer = csv.DictWriter(log_file, fieldnames=CSV_FIELDS)
-    writer.writeheader()
-    rospy.loginfo("Logging the path to %s", log_path)
+
+class PathLog(object):
+    """The 10 Hz CSV path log in ~outdir (default output/demo in the package)."""
+
+    def __init__(self):
+        import rospkg
+        import rospy
+        outdir = rospy.get_param("~outdir", "output/demo")
+        if not os.path.isabs(outdir):
+            outdir = os.path.join(rospkg.RosPack().get_path("my_gurdy_description"), outdir)
+        self.path = default_log_path(outdir)
+        self.file = open(self.path, "w", newline="")
+        self.writer = csv.DictWriter(self.file, fieldnames=CSV_FIELDS)
+        self.writer.writeheader()
+        rospy.loginfo("Logging the path to %s", self.path)
+
+    def write(self, state):
+        """Write a row if one is due. Call with the state's lock held."""
+        if state.should_log() and not self.file.closed:
+            self.writer.writerow(state.csv_row())
+            self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+
+def subscribe_state(state, lock, log=None):
+    """
+    Feed state from /gurdy/odom, the 12 position controller commands and the
+    voice topics (transcript, command, feedback, /gurdy/ui/state). log: a
+    PathLog to write at 10 Hz, or None. Needs rospy.init_node first.
+    """
+    import rospy
+    from nav_msgs.msg import Odometry
+    from std_msgs.msg import Float64, String
 
     def on_odom(msg):
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
         with lock:
             state.odom(msg.header.stamp.to_sec(), p.x, p.y, p.z, q.x, q.y, q.z, q.w)
-            if state.should_log() and not log_file.closed:
-                writer.writerow(state.csv_row())
-                log_file.flush()
+            if log is not None:
+                log.write(state)
 
     def joint_callback(joint):
         def on_command(msg):
@@ -423,6 +437,23 @@ def main():
     rospy.Subscriber("/gurdy/voice_command", String, text_callback(state.command))
     rospy.Subscriber("/gurdy/voice_feedback", String, text_callback(state.feedback))
     rospy.Subscriber(UI_STATE_TOPIC, String, text_callback(state.ui_state))
+
+
+def main():
+    import rospy
+    from sensor_msgs.msg import Image
+    from std_msgs.msg import String
+
+    rospy.init_node("gurdy_dashboard", anonymous=True)
+    import matplotlib
+    matplotlib.use("TkAgg")
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    state = make_state()
+    lock = threading.Lock()
+    log = PathLog()
+    subscribe_state(state, lock, log)
     # Not latched: a talk request must not replay to a restarted voice client
     talk_pub = rospy.Publisher(UI_TALK_TOPIC, String, queue_size=5)
     command_pub = rospy.Publisher(VOICE_COMMAND_TOPIC, String, queue_size=5)
@@ -464,8 +495,8 @@ def main():
     finally:
         del animation
         with lock:
-            log_file.close()
-        print("Path saved to %s" % log_path)
+            log.close()
+        print("Path saved to %s" % log.path)
         rospy.signal_shutdown("dashboard closed")
 
 
